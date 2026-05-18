@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- **Mojibake on the 5h / 7d segments** when `rate_limits` was absent from the hook payload (typical at session start or right after an account switch). PS 5.1 was reading the source file as Windows-1252 because it had no UTF-8 BOM, so the literal `'—'` in the fallback branch decoded to `â€"`. Fix is twofold: the script is now committed with a UTF-8 BOM, and the runtime em-dash is constructed via `[char]0x2014` so output stays correct even if the file is later re-saved without a BOM.
+- **Mojibake on the 5h / 7d segments while the percentages are loading** (when `rate_limits` is absent from the hook payload — typical at session start or right after an account switch). The earlier two-part fix (UTF-8 BOM on the source file + runtime `[char]0x2014` for the em-dash) was insufficient: some terminals / status-line consumers still decoded the UTF-8 bytes (`0xE2 0x80 0x94`) as Windows-1252 and rendered `â€"`. The loading-state placeholder is now plain ASCII (`--%`, e.g. `5h --% (103.8M tok, $300)`), which removes the encoding failure mode entirely. The BOM and runtime construction are retained as defence-in-depth for any other non-ASCII glyphs that may appear in user-supplied fields (org names, directory names, etc.).
 
 ### Changed
 

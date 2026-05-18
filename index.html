@@ -91,6 +91,10 @@ p code, li code, td code, dd code, span code {
   border-radius: 4px;
   font-size: 0.85em;
   color: var(--fg-soft);
+  /* Long identifiers like rate_limits.five_hour.used_percentage need to
+     wrap on narrow viewports or they punch through the paragraph box. */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .shell {
@@ -581,6 +585,11 @@ h1.headline .accent { color: var(--accent); }
 .step {
   display: flex;
   flex-direction: column;
+  /* Grid items default to min-width:auto, which is the content's min-content.
+     The pre block's longest unbreakable line would force the cell wider than
+     1fr distributes — overflowing the row on desktop. Clamping min-width lets
+     the cell shrink to 1fr and the pre's own overflow-x:auto kicks in. */
+  min-width: 0;
 }
 .step-num {
   font-family: var(--mono);

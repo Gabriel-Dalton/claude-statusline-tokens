@@ -22,14 +22,28 @@ for (const vp of viewports) {
   await page.evaluate(() => document.fonts?.ready);
 
   const offenders = await page.evaluate((vw) => {
+    // Walk up from each element and ask "does any ancestor clip horizontal
+    // overflow?" If so, this element's intrinsic position doesn't contribute
+    // to documentElement.scrollWidth — skip it.
+    const clipsX = (el) => {
+      const s = getComputedStyle(el);
+      return s.overflowX === "hidden" || s.overflowX === "clip" ||
+             s.overflowX === "scroll" || s.overflowX === "auto";
+    };
+    const isClippedByAncestor = (el) => {
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        if (clipsX(a)) return true;
+      }
+      return false;
+    };
+
     const out = [];
-    const all = document.querySelectorAll("*");
-    for (const el of all) {
+    for (const el of document.querySelectorAll("*")) {
       const r = el.getBoundingClientRect();
-      if (r.right > vw + 0.5 && r.width > 0) {
+      if (r.right > vw + 0.5 && r.width > 0 && !isClippedByAncestor(el)) {
         out.push({
           tag: el.tagName.toLowerCase(),
-          cls: el.className?.toString().slice(0, 60) || "",
+          cls: (el.className?.toString() || "").slice(0, 60),
           id: el.id || "",
           left: Math.round(r.left),
           right: Math.round(r.right),
@@ -39,8 +53,6 @@ for (const vp of viewports) {
         });
       }
     }
-    // Sort by overflow descending, take the largest offenders only — descendant
-    // matches usually duplicate ancestor matches, so cap the list.
     out.sort((a, b) => b.overflow - a.overflow);
     return out.slice(0, 12);
   }, vp.width);

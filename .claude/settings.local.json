@@ -13,7 +13,16 @@
       "PowerShell(claude *)",
       "Bash(claude mcp *)",
       "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "Bash(git -C \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens\" ls-files scripts/)",
+      "Bash(git -C \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens\" tag)",
+      "WebFetch(domain:docs.claude.com)",
+      "WebSearch",
+      "Bash(git -C \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens\" ls-files --error-unmatch scripts/node_modules/playwright/package.json)",
+      "Bash(git -C \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens\" check-ignore scripts/node_modules/playwright/package.json)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:ccusage.com)",
+      "PowerShell('{}' | powershell -NoProfile -ExecutionPolicy Bypass -File .\\\\statusline-tokens.ps1)"
     ]
   }
 }

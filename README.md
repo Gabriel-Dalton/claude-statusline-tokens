@@ -179,9 +179,9 @@ Do **not** run `Set-ExecutionPolicy Unrestricted -Scope LocalMachine` — that's
 </details>
 
 <details>
-<summary><strong>Status line shows but the 5h / 7d sections render as <code>â€"</code> instead of <code>—</code></strong></summary>
+<summary><strong>Status line shows but the 5h / 7d sections render as <code>â€"</code> while loading</strong></summary>
 
-This was a bug in pre-`0.3.x` versions where the script's source file lacked a UTF-8 BOM and PowerShell 5.1 misread the literal em-dash character. Re-download `statusline-tokens.ps1` from the repo to get the fixed version. The current file ships with a UTF-8 BOM and constructs the em-dash at runtime via `[char]0x2014`, so this can't happen on a fresh download.
+Older versions used a U+2014 em-dash (`—`) as the placeholder shown when the hook hasn't supplied `rate_limits` yet (session start, account switch, etc.). Even after the source file was switched to UTF-8-with-BOM and the glyph was constructed at runtime via `[char]0x2014`, some terminals / status-line consumers still decoded the UTF-8 bytes as Windows-1252 and rendered `â€"`. The current script uses a plain ASCII placeholder (`--%`, e.g. `5h --% (103.8M tok, $300)`) for the loading state, which can't mojibake. Re-download `statusline-tokens.ps1` from the repo if you're still seeing the em-dash variant.
 </details>
 
 <details>
