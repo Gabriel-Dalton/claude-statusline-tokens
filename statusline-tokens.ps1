@@ -400,8 +400,47 @@ if ($hook -and $hook.workspace -and $hook.workspace.current_dir) {
 $gitBranch = ''
 $cwd = $null
 if ($hook) { $cwd = $hook.workspace.current_dir; if (-not $cwd) { $cwd = $hook.cwd } }
+# Read .git/HEAD directly instead of shelling out to git. Shelling out
+# costs ~30-80 ms per render, fragments the rendering budget, and leaks
+# $LASTEXITCODE up to the caller. .git/HEAD is a one-line file:
+#   "ref: refs/heads/<name>"  → branch <name>
+#   "<40-char SHA>"           → detached HEAD, render first 7
+# Worktrees use .git as a *file* pointing at the real gitdir; resolve
+# that before reading HEAD.
 if ($cwd -and (Test-Path $cwd)) {
-    try { $gitBranch = (& git -C $cwd rev-parse --abbrev-ref HEAD 2>$null) } catch {}
+    try {
+        $gitPath = [System.IO.Path]::Combine($cwd, '.git')
+        if (Test-Path $gitPath) {
+            $gitDir = $gitPath
+            $info = Get-Item $gitPath -Force -ErrorAction SilentlyContinue
+            if ($info -and -not $info.PSIsContainer) {
+                # .git is a file: "gitdir: <path>"
+                $pointer = [System.IO.File]::ReadAllText($gitPath).Trim()
+                if ($pointer.StartsWith('gitdir:')) {
+                    $resolved = $pointer.Substring(7).Trim()
+                    if (-not [System.IO.Path]::IsPathRooted($resolved)) {
+                        $resolved = [System.IO.Path]::GetFullPath(
+                            [System.IO.Path]::Combine($cwd, $resolved))
+                    }
+                    $gitDir = $resolved
+                }
+            }
+            $headPath = [System.IO.Path]::Combine($gitDir, 'HEAD')
+            if (Test-Path $headPath) {
+                $head = [System.IO.File]::ReadAllText($headPath).Trim()
+                if ($head.StartsWith('ref:')) {
+                    $ref = $head.Substring(4).Trim()
+                    if ($ref.StartsWith('refs/heads/')) {
+                        $gitBranch = $ref.Substring(11)
+                    } else {
+                        $gitBranch = $ref
+                    }
+                } elseif ($head -match '^[0-9a-fA-F]{40}$') {
+                    $gitBranch = $head.Substring(0, 7)
+                }
+            }
+        }
+    } catch {}
 }
 
 $model = ''
