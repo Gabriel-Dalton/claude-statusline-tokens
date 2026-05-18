@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **`claude-dashboard.ps1` — full-screen live usage dashboard.** Run it in its own PowerShell window for a re-rendering view of the 5-hour and 7-day rate-limit windows (with progress bars + the same authoritative percentages the statusline shows), the current session, a top-projects table, a per-model (opus/sonnet/haiku) tokens-and-cost breakdown, and a 24-hour activity sparkline. Reuses the statusline's JSONL scan and account-attribution logic so the two views agree on every number. Refresh interval is configurable (`-RefreshSeconds`, default 20s); `-Once` renders a single frame and exits.
+- `statusline-tokens.ps1` now persists the most recent `rate_limits.{five_hour,seven_day}.used_percentage` values from the hook payload into `~/.claude/statusline-tokens.cache.json` (new fields: `pct5h`, `pct7d`, `pctSavedAtUtc`). The dashboard reads these so its progress bars reflect the authoritative quota numbers — not a local approximation. Stale values (>10 min old) fall back to a "--%" rendering rather than misleading.
+
+### Changed
+
+- The statusline now rewrites `~/.claude/statusline-tokens.cache.json` on every invocation (previously only on cache miss). This keeps the persisted percentages fresh for the dashboard even when the token totals come from the cache. Cost is negligible — the write is a few hundred bytes of JSON.
+
 ### Fixed
 
 - **Mojibake on the 5h / 7d segments while the percentages are loading** (when `rate_limits` is absent from the hook payload — typical at session start or right after an account switch). The earlier two-part fix (UTF-8 BOM on the source file + runtime `[char]0x2014` for the em-dash) was insufficient: some terminals / status-line consumers still decoded the UTF-8 bytes (`0xE2 0x80 0x94`) as Windows-1252 and rendered `â€"`. The loading-state placeholder is now plain ASCII (`--%`, e.g. `5h --% (103.8M tok, $300)`), which removes the encoding failure mode entirely. The BOM and runtime construction are retained as defence-in-depth for any other non-ASCII glyphs that may appear in user-supplied fields (org names, directory names, etc.).
