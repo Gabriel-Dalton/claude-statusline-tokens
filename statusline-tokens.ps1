@@ -4,9 +4,20 @@
 # by Claude Code on stdin. Tokens are summed from ~/.claude/projects/**/*.jsonl
 # entries whose timestamps fall inside the rolling 5h / 7d window.
 
-$ErrorActionPreference = 'SilentlyContinue'
 [System.Threading.Thread]::CurrentThread.CurrentCulture =
     [System.Globalization.CultureInfo]::InvariantCulture
+
+# Stub: M2-05 will route to a rotating log at ~/.claude/statusline-tokens.log
+# when $env:STATUSLINE_DEBUG is set. For now this swallows quietly.
+function Write-DebugLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline=$true, Position=0)]
+        [object]$Message,
+        [string]$Scope = ''
+    )
+    # Intentional no-op until M2-05.
+}
 
 # Without this, non-ASCII glyphs like ⎇ ✱ get downgraded to '?' by the
 # system code page on Windows when PowerShell flushes stdout.
@@ -55,12 +66,18 @@ try {
     } else {
         $stdin = [System.Text.Encoding]::UTF8.GetString($stdinBytes)
     }
-} catch { $stdin = '' }
+} catch {
+    Write-DebugLog $_ -Scope 'stdin-read'
+    $stdin = ''
+}
 if ([string]::IsNullOrWhiteSpace($stdin)) {
     [Console]::Out.Write("statusline-tokens: no hook input")
     exit 0
 }
-try { $hook = $stdin | ConvertFrom-Json -ErrorAction Stop } catch { $hook = $null }
+try { $hook = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-DebugLog $_ -Scope 'hook-parse'
+    $hook = $null
+}
 
 function Fmt-Tokens([long]$n) {
     if ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }
@@ -217,10 +234,10 @@ if (Test-Path $globalConfigPath) {
         # -Encoding UTF8 because Claude Code writes ~/.claude.json without a
         # BOM; PS 5.1's default reader assumes the system code page and
         # mangles non-ASCII org names (accented characters, CJK, etc).
-        $raw = Get-Content -Raw -Encoding UTF8 $globalConfigPath
+        $raw = Get-Content -Raw -Encoding UTF8 $globalConfigPath -ErrorAction Stop
         $block = Get-JsonObject $raw 'oauthAccount'
         if ($block) {
-            $oa = $block | ConvertFrom-Json
+            $oa = $block | ConvertFrom-Json -ErrorAction Stop
             if ($oa.organizationUuid) {
                 $currentAccount = @{
                     org   = [string]$oa.organizationUuid
@@ -229,7 +246,7 @@ if (Test-Path $globalConfigPath) {
                 }
             }
         }
-    } catch {}
+    } catch { Write-DebugLog $_ -Scope 'oauth-parse' }
 }
 
 # --- load and update account checkpoints ---------------------------------
@@ -243,9 +260,9 @@ if (Test-Path $accountsPath) {
         # BOMs, falls back to UTF-8) and behaves identically on PS 5.1 and
         # pwsh 7 — unlike Get-Content -Encoding UTF8, which writes the
         # BOM in PS 5.1 but not in pwsh 7.
-        $loaded = [System.IO.File]::ReadAllText($accountsPath) | ConvertFrom-Json
+        $loaded = [System.IO.File]::ReadAllText($accountsPath) | ConvertFrom-Json -ErrorAction Stop
         if ($loaded.checkpoints) { $checkpoints = @($loaded.checkpoints) }
-    } catch {}
+    } catch { Write-DebugLog $_ -Scope 'accounts-load' }
 }
 if ($currentAccount) {
     $last = $null
@@ -262,9 +279,9 @@ if ($currentAccount) {
             # produce a no-BOM file that's byte-identical across PS 5.1
             # and pwsh 7. Set-Content -Encoding utf8 emits a BOM on PS
             # 5.1 and no BOM on pwsh 7.
-            $body = @{ checkpoints = $checkpoints } | ConvertTo-Json -Depth 4
+            $body = @{ checkpoints = $checkpoints } | ConvertTo-Json -Depth 4 -ErrorAction Stop
             [System.IO.File]::WriteAllText($accountsPath, $body, [System.Text.UTF8Encoding]::new($false))
-        } catch {}
+        } catch { Write-DebugLog $_ -Scope 'accounts-write' }
     }
 }
 
@@ -277,7 +294,10 @@ function Account-At([DateTime]$t) {
     if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
     $acct = $script:checkpoints[0]
     foreach ($cp in $script:checkpoints) {
-        try { $cpTime = [DateTime]::Parse($cp.from).ToUniversalTime() } catch { continue }
+        try { $cpTime = [DateTime]::Parse($cp.from).ToUniversalTime() } catch {
+            Write-DebugLog $_ -Scope 'checkpoint-parse'
+            continue
+        }
         if ($t -ge $cpTime) { $acct = $cp } else { break }
     }
     return $acct
@@ -302,7 +322,7 @@ $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 if (Test-Path $cachePath) {
     try {
-        $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json
+        $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json -ErrorAction Stop
         $age = ($nowUtc - [DateTime]::Parse($cache.computedAtUtc).ToUniversalTime()).TotalSeconds
         # Invalidate if the active account changed since last scan — otherwise
         # the cached per-account numbers belong to the wrong org.
@@ -317,7 +337,7 @@ if (Test-Path $cachePath) {
             $costSession = [double]$cache.costSession
             $useCache    = $true
         }
-    } catch {}
+    } catch { Write-DebugLog $_ -Scope 'cache-read' }
 }
 
 if (-not $useCache -and (Test-Path $projectsDir)) {
@@ -343,7 +363,10 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                 if (-not $mTs.Success) { continue }
                 $t = $null
                 try { $t = [DateTime]::Parse($mTs.Groups[1].Value).ToUniversalTime() }
-                catch { continue }
+                catch {
+                    Write-DebugLog $_ -Scope 'turn-timestamp-parse'
+                    continue
+                }
                 if ($t -lt $cut7d) { continue }
 
                 # Dedupe by message id — the same assistant turn is logged
@@ -409,7 +432,8 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             }
             $reader.Close()
         } catch {
-            if ($reader) { try { $reader.Close() } catch {} }
+            Write-DebugLog $_ -Scope 'transcript-scan'
+            if ($reader) { try { $reader.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
         }
     }
 
@@ -467,9 +491,9 @@ try {
     if ($null -ne $pct5h -or $null -ne $pct7d) {
         $payload.pctSavedAtUtc = $nowUtc.ToString('o')
     }
-    $body = $payload | ConvertTo-Json -Compress
+    $body = $payload | ConvertTo-Json -Compress -ErrorAction Stop
     [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
-} catch {}
+} catch { Write-DebugLog $_ -Scope 'cache-write' }
 
 # --- context tokens: last usage block in the current session transcript --
 $ctxTokens = [long]0
@@ -538,7 +562,7 @@ if ($cwd -and (Test-Path $cwd)) {
                 }
             }
         }
-    } catch {}
+    } catch { Write-DebugLog $_ -Scope 'git-head' }
 }
 
 $model = ''
