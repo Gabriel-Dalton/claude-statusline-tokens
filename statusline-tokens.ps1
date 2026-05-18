@@ -336,13 +336,23 @@ if (Test-Path $cachePath) {
         if ($cache.PSObject.Properties.Match('orgKey').Count -gt 0) { $cachedOrg = [string]$cache.orgKey }
         $cachedVer = 0
         if ($cache.PSObject.Properties.Match('schemaVersion').Count -gt 0) { $cachedVer = [int]$cache.schemaVersion }
-        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey) {
+        # Whole-cache validity: TTL, account match, AND schema match. An
+        # older-shape cache (schemaVersion == 0 here, because the field
+        # didn't exist before M1-04) is treated as a MISS so the next
+        # scan rebuilds the per-file tail cache from scratch and M1-02's
+        # session-recompute has data to work with.
+        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion) {
             $tok5h       = [long]$cache.tok5h
             $tok7d       = [long]$cache.tok7d
             $cost5h      = [double]$cache.cost5h
             $cost7d      = [double]$cache.cost7d
-            $tokSession  = [long]$cache.tokSession
-            $costSession = [double]$cache.costSession
+            # M1-02: tokSession / costSession are NOT restored from the
+            # top-level cache. They're recomputed below from the per-file
+            # tail cache ($transcriptCache) every render so a new turn
+            # arriving mid-TTL is reflected immediately. The 5h/7d totals
+            # drift slowly enough that a 20s lag is acceptable; the
+            # session window does not (it can flip from "active" to
+            # "ended" the moment 30 minutes of silence elapse).
             $useCache    = $true
         }
         # Per-transcript tail cache is only readable when the on-disk
@@ -559,30 +569,52 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             turns          = $turnsForCache
         }
     }
+}
 
-    # --- session boundary ----------------------------------------------------
-    # A session is the current burst of contiguous activity, defined as
-    # "the chain of turns ending at the most recent one, where no gap
-    # between consecutive turns exceeds $sessionGapMinutes — AND the
-    # most recent turn itself is within $sessionGapMinutes of now."
-    #
-    # If the latest turn is older than that, no session is "active" right
-    # now and we report 0. The next new turn seeds a fresh session.
-    if ($turns.Count -gt 0) {
-        $gapTicks = [long]$sessionGapMinutes * [TimeSpan]::TicksPerMinute
-        $sorted = @($turns | Sort-Object -Property { $_.ticks } -Descending)
-        $latestTicks = $sorted[0].ticks
-        if (($nowUtc.Ticks - $latestTicks) -le $gapTicks) {
-            $prev = $latestTicks
-            foreach ($e in $sorted) {
-                if (($prev - $e.ticks) -gt $gapTicks) { break }
-                $tokSession  += [long]$e.sum
-                $costSession += [double]$e.cost
-                $prev = $e.ticks
-            }
+# --- session boundary ----------------------------------------------------
+# A session is the current burst of contiguous activity, defined as
+# "the chain of turns ending at the most recent one, where no gap
+# between consecutive turns exceeds $sessionGapMinutes — AND the
+# most recent turn itself is within $sessionGapMinutes of now."
+#
+# If the latest turn is older than that, no session is "active" right
+# now and we report 0. The next new turn seeds a fresh session.
+#
+# M1-02: the session is recomputed on EVERY render (cache HIT or MISS).
+# On a MISS, $turns was populated by Apply-Turn during the scan above.
+# On a HIT, we never scanned, so build the same flat list from the
+# per-file tail cache ($transcriptCache) we always load. This is fast
+# because $transcriptCache is already in memory — no file I/O — and
+# the turn count across all transcripts is small (hundreds, not
+# millions). The cost is dominated by the Sort-Object, which is O(n
+# log n) on the same data either path.
+if ($useCache) {
+    $turns = New-Object System.Collections.ArrayList
+    foreach ($entry in $transcriptCache.Values) {
+        if (-not $entry) { continue }
+        if ($entry.PSObject.Properties.Match('turns').Count -le 0) { continue }
+        if (-not $entry.turns) { continue }
+        foreach ($t in $entry.turns) {
+            # Same 7d filter as the scan path so stale cached turns
+            # don't keep contributing to the session window forever.
+            if ([long]$t.ticks -lt $cut7d.Ticks) { continue }
+            [void]$turns.Add(@{ ticks = [long]$t.ticks; sum = [long]$t.sum; cost = [double]$t.cost })
         }
     }
-
+}
+if ($turns -and $turns.Count -gt 0) {
+    $gapTicks = [long]$sessionGapMinutes * [TimeSpan]::TicksPerMinute
+    $sorted = @($turns | Sort-Object -Property { $_.ticks } -Descending)
+    $latestTicks = $sorted[0].ticks
+    if (($nowUtc.Ticks - $latestTicks) -le $gapTicks) {
+        $prev = $latestTicks
+        foreach ($e in $sorted) {
+            if (($prev - $e.ticks) -gt $gapTicks) { break }
+            $tokSession  += [long]$e.sum
+            $costSession += [double]$e.cost
+            $prev = $e.ticks
+        }
+    }
 }
 
 # --- native percentages from hook stdin -----------------------------------
@@ -607,8 +639,11 @@ try {
         tok7d         = $tok7d
         cost5h        = $cost5h
         cost7d        = $cost7d
-        tokSession    = $tokSession
-        costSession   = $costSession
+        # M1-02: tokSession / costSession are deliberately *not* cached.
+        # They're recomputed every render from per-file turns so the
+        # session window can flip from "active" to "ended" the moment
+        # the 30-min idle threshold is crossed, instead of lagging by
+        # up to one cache-TTL cycle (20 s).
     }
     if ($null -ne $pct5h) { $payload.pct5h = [double]$pct5h }
     if ($null -ne $pct7d) { $payload.pct7d = [double]$pct7d }
