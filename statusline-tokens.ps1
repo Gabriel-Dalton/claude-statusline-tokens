@@ -356,8 +356,15 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             while (-not $reader.EndOfStream) {
                 $line = $reader.ReadLine()
                 if (-not $line) { continue }
-                # Cheap filter — only lines with a usage block carry tokens.
-                if ($line.IndexOf('"usage"') -lt 0) { continue }
+                # Cheap filter — only assistant turns carry a usage block.
+                # Anchor on JSON shape so a user message whose text contains
+                # the literal characters `"usage"` (e.g., the user pasted a
+                # snippet from a transcript or said the word in quotes) does
+                # not get treated as an assistant turn. Both substrings must
+                # appear on the same line, which is true of Claude Code's
+                # one-turn-per-line JSONL.
+                if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
+                if ($line.IndexOf('"usage":{') -lt 0) { continue }
 
                 $mTs = $rxTs.Match($line)
                 if (-not $mTs.Success) { continue }
@@ -500,7 +507,16 @@ $ctxTokens = [long]0
 if ($hook -and $hook.transcript_path -and (Test-Path $hook.transcript_path)) {
     $lastUsageLine = $null
     foreach ($line in [System.IO.File]::ReadLines($hook.transcript_path)) {
-        if ($line.IndexOf('"usage"') -ge 0) { $lastUsageLine = $line }
+        # Anchor on JSON shape: require both `"role":"assistant"` and
+        # `"usage":{` on the same line. A bare `"usage"` substring match
+        # used to false-positive on user messages quoting the word
+        # `usage`, clobbering $lastUsageLine and producing a 0-token
+        # context readout. Claude Code writes one turn per line, so
+        # both anchors will appear together iff this is a real
+        # assistant turn with a usage block.
+        if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
+        if ($line.IndexOf('"usage":{') -lt 0) { continue }
+        $lastUsageLine = $line
     }
     if ($lastUsageLine) {
         $sum = [long]0
