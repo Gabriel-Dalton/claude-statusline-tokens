@@ -141,7 +141,11 @@ if (Test-Path $globalConfigPath) {
 $checkpoints = @()
 if (Test-Path $accountsPath) {
     try {
-        $loaded = Get-Content -Raw -Encoding UTF8 $accountsPath | ConvertFrom-Json
+        # ReadAllText is BOM-tolerant by default (auto-detects UTF-8/16
+        # BOMs, falls back to UTF-8) and behaves identically on PS 5.1 and
+        # pwsh 7 — unlike Get-Content -Encoding UTF8, which writes the
+        # BOM in PS 5.1 but not in pwsh 7.
+        $loaded = [System.IO.File]::ReadAllText($accountsPath) | ConvertFrom-Json
         if ($loaded.checkpoints) { $checkpoints = @($loaded.checkpoints) }
     } catch {}
 }
@@ -156,9 +160,12 @@ if ($currentAccount) {
             name  = $currentAccount.name
         }
         try {
-            @{ checkpoints = $checkpoints } |
-                ConvertTo-Json -Depth 4 |
-                Set-Content -Path $accountsPath -Encoding utf8
+            # WriteAllText with UTF8Encoding($false) is the only way to
+            # produce a no-BOM file that's byte-identical across PS 5.1
+            # and pwsh 7. Set-Content -Encoding utf8 emits a BOM on PS
+            # 5.1 and no BOM on pwsh 7.
+            $body = @{ checkpoints = $checkpoints } | ConvertTo-Json -Depth 4
+            [System.IO.File]::WriteAllText($accountsPath, $body, [System.Text.UTF8Encoding]::new($false))
         } catch {}
     }
 }
@@ -197,7 +204,7 @@ $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 if (Test-Path $cachePath) {
     try {
-        $cache = Get-Content -Raw -Encoding UTF8 $cachePath | ConvertFrom-Json
+        $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json
         $age = ($nowUtc - [DateTime]::Parse($cache.computedAtUtc).ToUniversalTime()).TotalSeconds
         # Invalidate if the active account changed since last scan — otherwise
         # the cached per-account numbers belong to the wrong org.
@@ -362,7 +369,8 @@ try {
     if ($null -ne $pct5h -or $null -ne $pct7d) {
         $payload.pctSavedAtUtc = $nowUtc.ToString('o')
     }
-    $payload | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
+    $body = $payload | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
 } catch {}
 
 # --- context tokens: last usage block in the current session transcript --
