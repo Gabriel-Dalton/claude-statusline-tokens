@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mojibake on the 5h / 7d segments** when `rate_limits` was absent from the hook payload (typical at session start or right after an account switch). PS 5.1 was reading the source file as Windows-1252 because it had no UTF-8 BOM, so the literal `'—'` in the fallback branch decoded to `â€"`. Fix is twofold: the script is now committed with a UTF-8 BOM, and the runtime em-dash is constructed via `[char]0x2014` so output stays correct even if the file is later re-saved without a BOM.
+
+### Changed
+
+- All reads of `~/.claude.json`, `~/.claude/statusline-accounts.json`, and `~/.claude/statusline-tokens.cache.json` now use `Get-Content -Raw -Encoding UTF8`. Prevents corruption when an organization name or other JSON field contains non-ASCII characters.
+- README install section rewritten with a fast path (one-liner download + JSON merge) and a guided path (eight verifiable steps + troubleshooting block) so first-time Claude Code users can install without prior PowerShell or `settings.json` experience.
+
 ## [0.3.0] — 2026-05-18
 
 ### Changed (breaking)

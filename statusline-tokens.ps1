@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # Custom status line: 5h + 7d windows with native percentages AND token totals.
 # Percentages come from rate_limits.{five_hour,seven_day}.used_percentage injected
 # by Claude Code on stdin. Tokens are summed from ~/.claude/projects/**/*.jsonl
@@ -106,7 +106,10 @@ function Get-JsonObject([string]$content, [string]$keyName) {
 $currentAccount = $null
 if (Test-Path $globalConfigPath) {
     try {
-        $raw = Get-Content -Raw $globalConfigPath
+        # -Encoding UTF8 because Claude Code writes ~/.claude.json without a
+        # BOM; PS 5.1's default reader assumes the system code page and
+        # mangles non-ASCII org names (accented characters, CJK, etc).
+        $raw = Get-Content -Raw -Encoding UTF8 $globalConfigPath
         $block = Get-JsonObject $raw 'oauthAccount'
         if ($block) {
             $oa = $block | ConvertFrom-Json
@@ -128,7 +131,7 @@ if (Test-Path $globalConfigPath) {
 $checkpoints = @()
 if (Test-Path $accountsPath) {
     try {
-        $loaded = Get-Content -Raw $accountsPath | ConvertFrom-Json
+        $loaded = Get-Content -Raw -Encoding UTF8 $accountsPath | ConvertFrom-Json
         if ($loaded.checkpoints) { $checkpoints = @($loaded.checkpoints) }
     } catch {}
 }
@@ -184,7 +187,7 @@ $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 if (Test-Path $cachePath) {
     try {
-        $cache = Get-Content -Raw $cachePath | ConvertFrom-Json
+        $cache = Get-Content -Raw -Encoding UTF8 $cachePath | ConvertFrom-Json
         $age = ($nowUtc - [DateTime]::Parse($cache.computedAtUtc).ToUniversalTime()).TotalSeconds
         # Invalidate if the active account changed since last scan — otherwise
         # the cached per-account numbers belong to the wrong org.
@@ -212,6 +215,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
 
     foreach ($f in $files) {
+        $reader = $null
         try {
             $reader = [System.IO.File]::OpenText($f.FullName)
             while (-not $reader.EndOfStream) {
@@ -392,8 +396,13 @@ if ($dir)       { $parts += (Color $fgDir $dir) }
 if ($gitBranch) { $parts += (Color $fgGit $gitBranch.Trim()) }
 if ($model)     { $parts += (Color $fgMod $model) }
 
-if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = '—' }
-if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = '—' }
+# U+2014 em-dash, constructed at runtime so the source file's encoding
+# (BOM or no-BOM) doesn't determine whether output renders correctly.
+# Without this, PS 5.1 on a no-BOM file reads '—' as three Windows-1252
+# chars ('â€"') and the status line shows mojibake when percentages are null.
+$emDash = [string][char]0x2014
+if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = $emDash }
+if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = $emDash }
 $parts += (Color $fg5h      ("5h {0} ({1} tok, {2})" -f $p5, (Fmt-Tokens $tok5h),      (Fmt-Cost $cost5h)))
 $parts += (Color $fg7d      ("7d {0} ({1} tok, {2})" -f $p7, (Fmt-Tokens $tok7d),      (Fmt-Cost $cost7d)))
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))

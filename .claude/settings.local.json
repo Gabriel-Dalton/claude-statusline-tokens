@@ -4,7 +4,13 @@
       "Bash(git mv *)",
       "mcp__claude_ai_Figma__whoami",
       "Bash(git config *)",
-      "PowerShell(Get-Content *)"
+      "PowerShell(Get-Content *)",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\statusline-tokens.ps1'\\); \"First 3 bytes \\(hex\\): {0:X2} {1:X2} {2:X2}\" -f $bytes[0], $bytes[1], $bytes[2]; \"File length: $\\($bytes.Length\\)\")",
+      "PowerShell($content = [System.IO.File]::ReadAllText\\('C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\statusline-tokens.ps1', [System.Text.Encoding]::UTF8\\); $lineNum=0; foreach \\($line in \\($content -split \"`n\"\\)\\) { $lineNum++; for \\($i=0; $i -lt $line.Length; $i++\\) { $c=[int][char]$line[$i]; if \\($c -gt 127\\) { \"Line ${lineNum} col ${i}: U+{0:X4} '{1}'\" -f $c, $line[$i]; break } } })",
+      "PowerShell(Test-Path *)",
+      "Bash(claude --version)",
+      "Bash(npx --version)",
+      "PowerShell(claude *)"
     ]
   }
 }
