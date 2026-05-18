@@ -317,9 +317,15 @@ $rxCache1h  = [regex]'"ephemeral_1h_input_tokens":(\d+)'
 # Cache: full scan takes ~600-800ms over 19MB+, but the statusline re-renders
 # on every turn. Reuse the cached numbers if computed within the last 20s.
 $cacheTtlSec = 20
+$cacheSchemaVersion = 2   # bump when on-disk shape changes; older caches discarded
 $useCache = $false
 $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
+# Per-transcript tail cache (M1-04): keyed by absolute path, each entry
+# carries `length`, `lastScanOffset`, `lastUsageLine`, and `turns` from
+# the previous scan. Always loaded (even on top-level cache HIT) so the
+# next MISS can resume cheaply.
+$transcriptCache = @{}
 if (Test-Path $cachePath) {
     try {
         $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json -ErrorAction Stop
@@ -328,6 +334,8 @@ if (Test-Path $cachePath) {
         # the cached per-account numbers belong to the wrong org.
         $cachedOrg = ''
         if ($cache.PSObject.Properties.Match('orgKey').Count -gt 0) { $cachedOrg = [string]$cache.orgKey }
+        $cachedVer = 0
+        if ($cache.PSObject.Properties.Match('schemaVersion').Count -gt 0) { $cachedVer = [int]$cache.schemaVersion }
         if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey) {
             $tok5h       = [long]$cache.tok5h
             $tok7d       = [long]$cache.tok7d
@@ -337,7 +345,110 @@ if (Test-Path $cachePath) {
             $costSession = [double]$cache.costSession
             $useCache    = $true
         }
+        # Per-transcript tail cache is only readable when the on-disk
+        # shape matches what this script writes. An older cache from
+        # v0.3 or earlier carries no `transcripts` dict; an even older
+        # cache from a future incompatible bump would not be safe to
+        # reuse. In either case, fall back to a full rescan — the
+        # invalidation is automatic (we just don't populate
+        # $transcriptCache here, so every file looks new).
+        if ($cachedVer -eq $cacheSchemaVersion -and $cache.PSObject.Properties.Match('transcripts').Count -gt 0 -and $cache.transcripts) {
+            foreach ($prop in $cache.transcripts.PSObject.Properties) {
+                $transcriptCache[$prop.Name] = $prop.Value
+            }
+        }
     } catch { Write-DebugLog $_ -Scope 'cache-read' }
+}
+
+# Extract a turn from a single line. Returns a hashtable with ticks,
+# sum, cost, msgId on success, or $null when the line isn't an
+# assistant usage row (or carries no positive token count). The
+# two-anchor probe is the M1-03 false-positive guard. Returning a
+# hashtable lets the caller append to $turns and to the per-file
+# cache without re-parsing.
+function Parse-UsageLine([string]$line, [DateTime]$cut7dRef) {
+    if (-not $line) { return $null }
+    if ($line.IndexOf('"role":"assistant"') -lt 0) { return $null }
+    if ($line.IndexOf('"usage":{') -lt 0) { return $null }
+
+    $mTs = $rxTs.Match($line)
+    if (-not $mTs.Success) { return $null }
+    $t = $null
+    try { $t = [DateTime]::Parse($mTs.Groups[1].Value).ToUniversalTime() }
+    catch {
+        Write-DebugLog $_ -Scope 'turn-timestamp-parse'
+        return $null
+    }
+    if ($t -lt $cut7dRef) { return $null }
+
+    $msgId = $null
+    $mId = $rxMsgId.Match($line)
+    if ($mId.Success) { $msgId = $mId.Groups[1].Value }
+
+    $tIn = 0L; $tOut = 0L; $tCacheC = 0L; $tCacheR = 0L; $t5m = 0L; $t1h = 0L
+    $m = $rxInput.Match($line)   ; if ($m.Success) { $tIn     = [long]$m.Groups[1].Value }
+    $m = $rxOutput.Match($line)  ; if ($m.Success) { $tOut    = [long]$m.Groups[1].Value }
+    $m = $rxCacheC.Match($line)  ; if ($m.Success) { $tCacheC = [long]$m.Groups[1].Value }
+    $m = $rxCacheR.Match($line)  ; if ($m.Success) { $tCacheR = [long]$m.Groups[1].Value }
+    $m = $rxCache5m.Match($line) ; if ($m.Success) { $t5m     = [long]$m.Groups[1].Value }
+    $m = $rxCache1h.Match($line) ; if ($m.Success) { $t1h     = [long]$m.Groups[1].Value }
+
+    $sum = $tIn + $tOut + $tCacheC + $tCacheR
+    if ($sum -le 0) { return $null }
+
+    $modelId = ''
+    $mm = $rxModel.Match($line); if ($mm.Success) { $modelId = $mm.Groups[1].Value }
+    $p = $prices[(Get-ModelFamily $modelId)]
+    # If the 5m/1h breakdown isn't present (older transcripts),
+    # fall back to charging all cache creation at the 5m rate
+    # (the API default and the cheaper of the two).
+    if (($t5m + $t1h) -le 0) { $t5m = $tCacheC; $t1h = 0L }
+    $cost = (
+        $tIn     * $p.input     +
+        $tOut    * $p.output    +
+        $tCacheR * $p.cacheRead +
+        $t5m     * $p.cacheW5m  +
+        $t1h     * $p.cacheW1h
+    ) / 1000000.0
+
+    return @{ ticks = $t.Ticks; sum = $sum; cost = $cost; msgId = $msgId }
+}
+
+# Apply a parsed turn to the rolling aggregates and the session-turn
+# list. Dedupes by msgId (assistant turns get re-logged once per
+# content block; counting all of them would triple-count tokens).
+# Mutates the script-scope aggregates directly because PowerShell
+# functions can't return-by-ref in PS 5.1.
+function Apply-Turn($turn) {
+    if (-not $turn) { return }
+    if ($turn.msgId) {
+        if ($script:seen.ContainsKey($turn.msgId)) { return }
+        $script:seen[$turn.msgId] = $true
+    }
+    $t = [DateTime]::new([long]$turn.ticks, [DateTimeKind]::Utc)
+
+    # Attribute the turn to the account that was active at
+    # its timestamp. If no checkpoints exist yet (first run, no
+    # ~/.claude.json), $turnAcct is $null and we fall back to
+    # treating every turn as "current" — preserves the old
+    # single-account behavior.
+    $turnAcct = Account-At $t
+    $isCurrent = $true
+    if ($script:currentAccount) {
+        $isCurrent = ($turnAcct -and [string]$turnAcct.org -eq $script:currentAccount.org)
+    }
+
+    if ($isCurrent) {
+        $script:tok7d  += [long]$turn.sum
+        $script:cost7d += [double]$turn.cost
+        if ($t -gt $script:cut5h) {
+            $script:tok5h  += [long]$turn.sum
+            $script:cost5h += [double]$turn.cost
+        }
+    }
+    # Capture every turn (any account) for session detection
+    # below — session is account-independent.
+    [void]$script:turns.Add(@{ ticks = $turn.ticks; sum = $turn.sum; cost = $turn.cost })
 }
 
 if (-not $useCache -and (Test-Path $projectsDir)) {
@@ -345,102 +456,107 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
     # All scanned turns, regardless of account, used after the scan to
     # detect the session boundary by walking backward through time.
     $turns = New-Object System.Collections.ArrayList
+    # Updated per-transcript state written back to the cache file at the
+    # end of this block. Built from $transcriptCache, mutated in-place
+    # as we scan / resume each file.
+    $transcriptStateOut = @{}
     $files = Get-ChildItem -Path $projectsDir -Filter *.jsonl -Recurse `
         -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
 
     foreach ($f in $files) {
+        $key = $f.FullName
+        $currentLen = $f.Length
+        $cached = $null
+        if ($transcriptCache.ContainsKey($key)) { $cached = $transcriptCache[$key] }
+        # Per-file scan plan:
+        #  - resumeOffset = bytes to skip at file open. 0 means full scan.
+        #  - kept[]       = previously-parsed turns we still trust (only
+        #                   the cache-resume path populates this).
+        # Reasons to *not* resume:
+        #   1. No cached entry — first time we've seen this file.
+        #   2. Cached length > current length — file rotated or truncated.
+        #   3. The cached schemaVersion didn't match (handled above by
+        #      $transcriptCache being empty).
+        $resumeOffset = 0L
+        $kept = @()
+        if ($cached) {
+            $cachedLen = [long]$cached.length
+            if ($currentLen -lt $cachedLen) {
+                # Rotated / truncated. Discard the cache entry and full-scan.
+                $resumeOffset = 0L
+            } else {
+                $resumeOffset = [long]$cached.lastScanOffset
+                if ($cached.PSObject.Properties.Match('turns').Count -gt 0 -and $cached.turns) {
+                    foreach ($prev in $cached.turns) {
+                        # Drop cached turns that have aged out of the 7d
+                        # window since the last scan. Keeping them would
+                        # over-count the 7d total.
+                        if ([long]$prev.ticks -lt $cut7d.Ticks) { continue }
+                        $kept += ,(@{ ticks = [long]$prev.ticks; sum = [long]$prev.sum; cost = [double]$prev.cost; msgId = [string]$prev.msgId })
+                    }
+                }
+            }
+        }
+
+        # Replay cached turns first so $seen captures their msgIds before
+        # any new-byte scan runs. This makes the dedup symmetric: an
+        # assistant turn that was already in the cache won't be re-counted
+        # if for some reason the resume seek lands mid-turn.
+        foreach ($k in $kept) { Apply-Turn $k }
+
         $reader = $null
+        $stream = $null
+        $endOffset = $resumeOffset
+        $lastUsageLineThisFile = $null
+        if ($cached -and $cached.PSObject.Properties.Match('lastUsageLine').Count -gt 0) {
+            $lastUsageLineThisFile = [string]$cached.lastUsageLine
+        }
+        $newTurnsForCache = New-Object System.Collections.ArrayList
         try {
-            $reader = [System.IO.File]::OpenText($f.FullName)
+            $stream = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            if ($resumeOffset -gt 0 -and $resumeOffset -lt $stream.Length) {
+                [void]$stream.Seek($resumeOffset, [System.IO.SeekOrigin]::Begin)
+            }
+            # BOM detection disabled: when resumeOffset > 0 we've seeked
+            # past the start, so any "BOM-shaped" bytes there would just
+            # be random JSON content. Claude Code's transcripts are
+            # plain UTF-8 without a BOM anyway.
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $false, 4096, $false)
             while (-not $reader.EndOfStream) {
                 $line = $reader.ReadLine()
                 if (-not $line) { continue }
-                # Cheap filter — only assistant turns carry a usage block.
-                # Anchor on JSON shape so a user message whose text contains
-                # the literal characters `"usage"` (e.g., the user pasted a
-                # snippet from a transcript or said the word in quotes) does
-                # not get treated as an assistant turn. Both substrings must
-                # appear on the same line, which is true of Claude Code's
-                # one-turn-per-line JSONL.
-                if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
-                if ($line.IndexOf('"usage":{') -lt 0) { continue }
-
-                $mTs = $rxTs.Match($line)
-                if (-not $mTs.Success) { continue }
-                $t = $null
-                try { $t = [DateTime]::Parse($mTs.Groups[1].Value).ToUniversalTime() }
-                catch {
-                    Write-DebugLog $_ -Scope 'turn-timestamp-parse'
-                    continue
-                }
-                if ($t -lt $cut7d) { continue }
-
-                # Dedupe by message id — the same assistant turn is logged
-                # once per content block (thinking, tool_use, ...) and each
-                # log carries the same usage. Counting them all triples the
-                # number.
-                $mId = $rxMsgId.Match($line)
-                if ($mId.Success) {
-                    $key = $mId.Groups[1].Value
-                    if ($seen.ContainsKey($key)) { continue }
-                    $seen[$key] = $true
-                }
-
-                $tIn = 0L; $tOut = 0L; $tCacheC = 0L; $tCacheR = 0L; $t5m = 0L; $t1h = 0L
-                $m = $rxInput.Match($line)   ; if ($m.Success) { $tIn     = [long]$m.Groups[1].Value }
-                $m = $rxOutput.Match($line)  ; if ($m.Success) { $tOut    = [long]$m.Groups[1].Value }
-                $m = $rxCacheC.Match($line)  ; if ($m.Success) { $tCacheC = [long]$m.Groups[1].Value }
-                $m = $rxCacheR.Match($line)  ; if ($m.Success) { $tCacheR = [long]$m.Groups[1].Value }
-                $m = $rxCache5m.Match($line) ; if ($m.Success) { $t5m     = [long]$m.Groups[1].Value }
-                $m = $rxCache1h.Match($line) ; if ($m.Success) { $t1h     = [long]$m.Groups[1].Value }
-
-                $sum = $tIn + $tOut + $tCacheC + $tCacheR
-                if ($sum -le 0) { continue }
-
-                # Per-turn cost using this turn's model
-                $modelId = ''
-                $mm = $rxModel.Match($line); if ($mm.Success) { $modelId = $mm.Groups[1].Value }
-                $p = $prices[(Get-ModelFamily $modelId)]
-                # If the 5m/1h breakdown isn't present (older transcripts),
-                # fall back to charging all cache creation at the 5m rate
-                # (the API default and the cheaper of the two).
-                if (($t5m + $t1h) -le 0) { $t5m = $tCacheC; $t1h = 0L }
-                $cost = (
-                    $tIn     * $p.input     +
-                    $tOut    * $p.output    +
-                    $tCacheR * $p.cacheRead +
-                    $t5m     * $p.cacheW5m  +
-                    $t1h     * $p.cacheW1h
-                ) / 1000000.0
-
-                # Attribute the turn to the account that was active at
-                # its timestamp. If no checkpoints exist yet (first run, no
-                # ~/.claude.json), $turnAcct is $null and we fall back to
-                # treating every turn as "current" — preserves the old
-                # single-account behavior.
-                $turnAcct = Account-At $t
-                $isCurrent = $true
-                if ($currentAccount) {
-                    $isCurrent = ($turnAcct -and [string]$turnAcct.org -eq $currentAccount.org)
-                }
-
-                if ($isCurrent) {
-                    $tok7d  += $sum
-                    $cost7d += $cost
-                    if ($t -gt $cut5h) {
-                        $tok5h  += $sum
-                        $cost5h += $cost
-                    }
-                }
-                # Capture every turn (any account) for session detection
-                # below — session is account-independent.
-                [void]$turns.Add(@{ ticks = $t.Ticks; sum = $sum; cost = $cost })
+                $turn = Parse-UsageLine $line $cut7d
+                if (-not $turn) { continue }
+                # Track the latest assistant usage line in this file so
+                # the per-file cache can record it (used by context-token
+                # readouts and future consumers).
+                $lastUsageLineThisFile = $line
+                Apply-Turn $turn
+                [void]$newTurnsForCache.Add($turn)
             }
+            # Position after the read is the resume point for the next
+            # render. BaseStream.Position is the byte offset; even though
+            # StreamReader buffers, .Position reflects the stream's actual
+            # read head, which is what we want.
+            $endOffset = $reader.BaseStream.Position
             $reader.Close()
+            $stream = $null
         } catch {
             Write-DebugLog $_ -Scope 'transcript-scan'
             if ($reader) { try { $reader.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
+            if ($stream) { try { $stream.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
+        }
+
+        # Combine kept (cache) + new turns for the next run's cache entry.
+        $turnsForCache = @()
+        foreach ($k in $kept)         { $turnsForCache += ,$k }
+        foreach ($n in $newTurnsForCache) { $turnsForCache += ,$n }
+        $transcriptStateOut[$key] = @{
+            length         = $currentLen
+            lastScanOffset = $endOffset
+            lastUsageLine  = $lastUsageLineThisFile
+            turns          = $turnsForCache
         }
     }
 
@@ -484,6 +600,7 @@ if ($hook -and $hook.rate_limits) {
 # fresh scan above or the prior cache values loaded earlier in the script.
 try {
     $payload = @{
+        schemaVersion = $cacheSchemaVersion
         computedAtUtc = $nowUtc.ToString('o')
         orgKey        = $currentOrgKey
         tok5h         = $tok5h
@@ -498,25 +615,66 @@ try {
     if ($null -ne $pct5h -or $null -ne $pct7d) {
         $payload.pctSavedAtUtc = $nowUtc.ToString('o')
     }
-    $body = $payload | ConvertTo-Json -Compress -ErrorAction Stop
+    # Persist the per-transcript tail cache (M1-04). On a top-level
+    # cache HIT (or when no projects dir exists) we didn't scan, so
+    # carry forward whatever we loaded from the previous cache file
+    # so the next MISS still has resume offsets to seek to.
+    if ($useCache -or -not (Test-Path $projectsDir)) {
+        if ($transcriptCache.Count -gt 0) { $payload.transcripts = $transcriptCache }
+    } else {
+        $payload.transcripts = $transcriptStateOut
+    }
+    # Depth 6 covers transcripts -> <path> -> turns -> <turn-hashtable>
+    # without flattening the per-turn fields into strings.
+    $body = $payload | ConvertTo-Json -Compress -Depth 6 -ErrorAction Stop
     [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
 } catch { Write-DebugLog $_ -Scope 'cache-write' }
 
 # --- context tokens: last usage block in the current session transcript --
+# Fast path (M1-04): the projects-dir scan already captured the last
+# assistant usage line for every transcript it processed. Reuse it
+# instead of re-walking the file from byte 0. Falls through to the
+# full walk if the active transcript isn't in our per-file cache
+# (e.g. brand-new session whose file post-dates the last scan).
 $ctxTokens = [long]0
 if ($hook -and $hook.transcript_path -and (Test-Path $hook.transcript_path)) {
     $lastUsageLine = $null
-    foreach ($line in [System.IO.File]::ReadLines($hook.transcript_path)) {
-        # Anchor on JSON shape: require both `"role":"assistant"` and
-        # `"usage":{` on the same line. A bare `"usage"` substring match
-        # used to false-positive on user messages quoting the word
-        # `usage`, clobbering $lastUsageLine and producing a 0-token
-        # context readout. Claude Code writes one turn per line, so
-        # both anchors will appear together iff this is a real
-        # assistant turn with a usage block.
-        if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
-        if ($line.IndexOf('"usage":{') -lt 0) { continue }
-        $lastUsageLine = $line
+    $tpath = [string]$hook.transcript_path
+    # Look up by exact path first, then by FullName-normalised form —
+    # transcript_path arrives from the hook as the same string Claude
+    # Code uses, but our scan keyed by FileInfo.FullName which
+    # canonicalises separators. Try the path verbatim first, then a
+    # normalised lookup.
+    $hit = $null
+    if ($transcriptStateOut -and $transcriptStateOut.ContainsKey($tpath)) {
+        $hit = $transcriptStateOut[$tpath]
+    } elseif ($transcriptCache -and $transcriptCache.ContainsKey($tpath)) {
+        $hit = $transcriptCache[$tpath]
+    } else {
+        try {
+            $normalized = (Get-Item -LiteralPath $tpath -ErrorAction Stop).FullName
+            if ($transcriptStateOut -and $transcriptStateOut.ContainsKey($normalized)) {
+                $hit = $transcriptStateOut[$normalized]
+            } elseif ($transcriptCache -and $transcriptCache.ContainsKey($normalized)) {
+                $hit = $transcriptCache[$normalized]
+            }
+        } catch { Write-DebugLog $_ -Scope 'ctx-path-normalize' }
+    }
+    if ($hit -and $hit.lastUsageLine) {
+        $lastUsageLine = [string]$hit.lastUsageLine
+    } else {
+        foreach ($line in [System.IO.File]::ReadLines($tpath)) {
+            # Anchor on JSON shape: require both `"role":"assistant"` and
+            # `"usage":{` on the same line. A bare `"usage"` substring match
+            # used to false-positive on user messages quoting the word
+            # `usage`, clobbering $lastUsageLine and producing a 0-token
+            # context readout. Claude Code writes one turn per line, so
+            # both anchors will appear together iff this is a real
+            # assistant turn with a usage block.
+            if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
+            if ($line.IndexOf('"usage":{') -lt 0) { continue }
+            $lastUsageLine = $line
+        }
     }
     if ($lastUsageLine) {
         $sum = [long]0
