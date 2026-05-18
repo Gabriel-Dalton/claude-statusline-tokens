@@ -17,3 +17,6 @@ node_modules/
 
 # One-shot logs from scripts/create-issues.ps1
 .issues-created.log
+
+# Temp issue-comment markdown drafts written before posting via gh
+.issue-comments/
