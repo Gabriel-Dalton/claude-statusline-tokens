@@ -1,0 +1,22 @@
+# Local files produced by the script — never commit. They live in
+# ~/.claude/ in real use; this is a safety net in case anyone runs the
+# script with cwd set to the repo.
+statusline-tokens.cache.json
+statusline-accounts.json
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Node tooling (scripts/ Playwright helpers)
+node_modules/
+
+# One-shot logs from scripts/create-issues.ps1
+.issues-created.log
+
+# Temp issue-comment markdown drafts written before posting via gh
+.issue-comments/

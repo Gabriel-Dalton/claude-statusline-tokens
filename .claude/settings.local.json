@@ -33,7 +33,22 @@
       "Bash(xxd \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens/statusline-tokens.ps1\")",
       "Bash(xxd \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens/claude-dashboard.ps1\")",
       "Bash(powershell *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "PowerShell(winget install *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(gh auth *)",
+      "PowerShell($env:Path = [Environment]::GetEnvironmentVariable\\('Path','User'\\) + ';' + [Environment]::GetEnvironmentVariable\\('Path','Machine'\\); pwsh -NoProfile -File .\\\\scripts\\\\create-issues.ps1 -DryRun 2>&1 | Select-Object -Last 60)",
+      "PowerShell(Tee-Object *)",
+      "PowerShell(gh issue *)",
+      "Bash(export PATH=\"/c/Users/Gabriel-Dalton/AppData/Local/Microsoft/WinGet/Packages/GitHub.cli_Microsoft.Winget.Source_8wekyb3d8bbwe/bin:$PATH\")",
+      "PowerShell(powershell.exe -NoProfile -Command \"Get-Command Join-Path | Select -Expand Parameters | Out-String\" 2>&1 | Select-String -Pattern \"AdditionalChildPath\")",
+      "PowerShell($smoke = '{\"transcript_path\":\"C:/nonexistent.jsonl\",\"cwd\":\"' + \\(Get-Location\\).Path.Replace\\('\\\\','/'\\) + '\",\"model\":{\"display_name\":\"Test\",\"id\":\"claude-test\"},\"session_id\":\"smoke\",\"hook_event_name\":\"Status\"}'; $smoke | powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\\\statusline-tokens.ps1; \"`nExitCode: $LASTEXITCODE\")",
+      "Bash(gh issue *)",
+      "Bash(pwsh -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\setup.ps1\" -DryRun -SkipDashboardPreview)",
+      "PowerShell(Copy-Item *)",
+      "PowerShell(Out-Null *)",
+      "Bash(xxd)",
+      "PowerShell(Join-Path *)"
     ]
   }
 }

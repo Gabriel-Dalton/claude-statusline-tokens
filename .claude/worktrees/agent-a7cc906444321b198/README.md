@@ -81,44 +81,19 @@ The percentage bars need the statusline to have run at least once in the last 10
 
 ## Install
 
-**Requirements:** Windows 10 or 11 (macOS/Linux supported with `pwsh`), PowerShell 7+ recommended (`winget install Microsoft.PowerShell`) but Windows PowerShell 5.1 also works. Claude Code already set up. No npm, no pip, no extra modules.
+**Requirements:** Windows 10 or 11, Windows PowerShell 5.1 (preinstalled), Claude Code already set up. No npm, no pip, no extra modules.
 
-### Recommended: clone and run setup (30 seconds)
+Pick the path that fits you. The fast path is for people comfortable editing JSON; the guided path holds your hand and tells you exactly what to do if something goes wrong.
 
-```powershell
-git clone https://github.com/Gabriel-Dalton/claude-statusline-tokens
-cd claude-statusline-tokens
-.\setup.ps1
-```
-
-`setup.ps1` does three things:
-
-1. Copies `statusline-tokens.ps1` and `claude-dashboard.ps1` into `~/.claude/`.
-2. Shows the exact JSON block it wants to add to `~/.claude/settings.json` and asks `Y/n` before writing. A backup is saved to `settings.json.bak` first.
-3. Smoke-tests the statusline and offers to launch the dashboard once so you can see what you got.
-
-That's it — open a new Claude Code conversation to see the statusline; run `.\dashboard.ps1` any time for the full dashboard view.
-
-> **Want to see what setup will do without committing?** Run `.\setup.ps1 -DryRun` first. Nothing is written. To uninstall later: `.\setup.ps1 -Uninstall` (restores the `settings.json.bak` backup).
-
-> **Just want to try the dashboard first?** After cloning, run `.\dashboard.ps1 -Once`. No install, no settings.json change — it reads your existing `~/.claude/projects/**` transcripts and renders a single frame. (The progress-bar percentages will show `--%` until you also install the statusline, since they come from Claude Code's hook payload.)
-
-### Manual install (no setup.ps1)
-
-If you'd rather wire it up by hand, expand the details below. The setup script just automates these same steps.
-
-<details>
-<summary><strong>Fast path — copy two files + merge one JSON block</strong></summary>
+### Fast path (30 seconds, for AI/dev engineers)
 
 From a PowerShell prompt:
 
 ```powershell
-# 1. Download both scripts into Claude Code's config dir
-foreach ($f in 'statusline-tokens.ps1','claude-dashboard.ps1') {
-  Invoke-WebRequest `
-    -Uri "https://raw.githubusercontent.com/Gabriel-Dalton/claude-statusline-tokens/main/$f" `
-    -OutFile "$env:USERPROFILE\.claude\$f"
-}
+# 1. Download the script straight into Claude Code's config dir
+Invoke-WebRequest `
+  -Uri https://raw.githubusercontent.com/Gabriel-Dalton/claude-statusline-tokens/main/statusline-tokens.ps1 `
+  -OutFile "$env:USERPROFILE\.claude\statusline-tokens.ps1"
 
 # 2. Open settings.json and add the statusLine block shown below
 notepad "$env:USERPROFILE\.claude\settings.json"
@@ -130,25 +105,17 @@ The block to **merge** into `settings.json` (if the file already has other keys,
 {
   "statusLine": {
     "type": "command",
-    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
     "padding": 0
   }
 }
 ```
 
-> If you don't have `pwsh` installed, replace `pwsh` with `powershell` in the command above.
+Save, start a new Claude Code conversation, done. The script never touches the network and only reads files under `~/.claude`.
 
-Save, start a new Claude Code conversation, done. Run the dashboard with:
+> The repo ships a ready-to-copy version at [`examples/settings.json`](examples/settings.json).
 
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\claude-dashboard.ps1"
-```
-
-The repo ships a ready-to-copy version at [`examples/settings.json`](examples/settings.json).
-</details>
-
-<details>
-<summary><strong>Guided path — eight verifiable steps</strong></summary>
+### Guided path (5 minutes, for first-time Claude Code users)
 
 If you've never customized Claude Code before, follow these steps in order. Every step is verifiable so you'll know if it worked before moving on.
 
@@ -239,7 +206,6 @@ You should see a colored status line print to your terminal. If you get a permis
 **Step 8 — Launch Claude Code.**
 
 Open Claude Code (close any existing window first). The status line appears below the prompt on the next turn. If it doesn't show up, see *Troubleshooting*.
-</details>
 
 ### Troubleshooting
 
@@ -285,24 +251,11 @@ This script is Windows-only at the moment — a bash/zsh port is on the roadmap 
 <details>
 <summary><strong>I want to uninstall</strong></summary>
 
-If you installed via `setup.ps1`:
-
-```powershell
-.\setup.ps1 -Uninstall
-```
-
-This removes the copied scripts, restores `settings.json` from the backup, and leaves your cache/accounts history in place (delete those by hand for a clean slate).
-
-Manual uninstall:
-
 ```powershell
 Remove-Item "$env:USERPROFILE\.claude\statusline-tokens.ps1"
-Remove-Item "$env:USERPROFILE\.claude\claude-dashboard.ps1"         -ErrorAction SilentlyContinue
 Remove-Item "$env:USERPROFILE\.claude\statusline-tokens.cache.json" -ErrorAction SilentlyContinue
 Remove-Item "$env:USERPROFILE\.claude\statusline-accounts.json"     -ErrorAction SilentlyContinue
 ```
-
-Then remove the `statusLine` block from `~/.claude/settings.json` by hand.
 
 Then edit `~/.claude/settings.json` and remove the `statusLine` block.
 </details>

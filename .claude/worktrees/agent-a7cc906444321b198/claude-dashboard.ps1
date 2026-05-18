@@ -175,21 +175,10 @@ function Get-JsonObject([string]$content, [string]$keyName) {
 # Account detection + checkpoint history. Identical semantics to the
 # statusline so the two views agree on "which org owns this turn."
 # ---------------------------------------------------------------------------
-# Cross-platform user-profile resolution. [Environment]::GetFolderPath
-# returns "" rather than $null on non-Windows when the folder is unknown,
-# so we fall through to $HOME (PowerShell-provided on all platforms) and
-# finally to the Windows-only $env:USERPROFILE as a last resort.
-$userProfile = [Environment]::GetFolderPath('UserProfile')
-if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $HOME }
-if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
-
-# [IO.Path]::Combine handles per-OS separators and accepts any number of
-# parts, so the same call works on PS 5.1 (whose Join-Path is two-arg only)
-# and on pwsh 7+.
-$projectsDir      = [System.IO.Path]::Combine($userProfile, '.claude', 'projects')
-$globalConfigPath = [System.IO.Path]::Combine($userProfile, '.claude.json')
-$accountsPath     = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-accounts.json')
-$statuslineCache  = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-tokens.cache.json')
+$projectsDir      = Join-Path $env:USERPROFILE '.claude\projects'
+$globalConfigPath = Join-Path $env:USERPROFILE '.claude.json'
+$accountsPath     = Join-Path $env:USERPROFILE '.claude\statusline-accounts.json'
+$statuslineCache  = Join-Path $env:USERPROFILE '.claude\statusline-tokens.cache.json'
 
 # The statusline persists the most recent rate_limits.{five_hour,seven_day}
 # percentages it sees from the hook stdin. We read them here so the dashboard
