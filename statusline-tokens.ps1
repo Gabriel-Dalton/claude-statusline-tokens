@@ -60,10 +60,20 @@ $tok5h      = [long]0; $cost5h      = 0.0
 $tok7d      = [long]0; $cost7d      = 0.0
 $tokSession = [long]0; $costSession = 0.0   # all accounts contributing to the current burst
 
-$projectsDir       = Join-Path $env:USERPROFILE '.claude\projects'
-$cachePath         = Join-Path $env:USERPROFILE '.claude\statusline-tokens.cache.json'
-$globalConfigPath  = Join-Path $env:USERPROFILE '.claude.json'
-$accountsPath      = Join-Path $env:USERPROFILE '.claude\statusline-accounts.json'
+# Cross-platform user profile resolution. [Environment]::GetFolderPath
+# returns "" rather than $null on non-Windows when the folder is unknown,
+# so we explicitly fall through. $HOME is set by PowerShell on all
+# platforms; $env:USERPROFILE is Windows-only and kept as a last resort.
+$userProfile = [Environment]::GetFolderPath('UserProfile')
+if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $HOME }
+if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
+
+# [IO.Path]::Combine handles per-OS separators and works in PS 5.1
+# (whose Join-Path is two-arg only) as well as pwsh 7.
+$projectsDir       = [System.IO.Path]::Combine($userProfile, '.claude', 'projects')
+$cachePath         = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-tokens.cache.json')
+$globalConfigPath  = [System.IO.Path]::Combine($userProfile, '.claude.json')
+$accountsPath      = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-accounts.json')
 
 # --- detect current account ----------------------------------------------
 # ~/.claude.json carries oauthAccount.{organizationUuid, emailAddress, ...}
