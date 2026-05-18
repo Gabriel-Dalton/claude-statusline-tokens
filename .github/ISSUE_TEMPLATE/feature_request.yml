@@ -1,0 +1,96 @@
+name: Feature request
+description: Propose an enhancement. Read the v2 scope filter below before filing — it saves everyone time.
+title: "[feature]: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        This project is intentionally small — a single PowerShell script plus
+        docs. v2 is focused on **reliability and polish**, not new surface area.
+        Anything that's "build the analytics dashboard / billing exporter /
+        alert system / Prometheus integration" is explicitly out of scope (see
+        `CONTRIBUTING.md`) and belongs in a v3 conversation or a sibling
+        project.
+
+        Before filing, please describe the **use case** rather than the
+        feature, and self-assess against the v2 north star. That gets the
+        conversation classified correctly on intake.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What are you trying to do?
+      description: |
+        Describe the **use case**, not the feature. What's the underlying job
+        you're trying to get done? What does success look like for you?
+
+        (We want this framing because a feature proposal often has multiple
+        possible implementations, and starting from the use case keeps the
+        door open to better alternatives than the one you'd reach for first.)
+      placeholder: |
+        "I want to know at a glance whether I'm currently on Opus vs Sonnet for
+        cost-control reasons during long sessions."
+
+        (not: "Add an emoji indicator next to the model name.")
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-filter
+    attributes:
+      label: v2 scope-creep filter
+      description: |
+        Does this fit the v2 north star of **reliability and polish** of the
+        existing statusline + dashboard, or does it belong in a hypothetical v3?
+
+        Examples of v2-shaped work:
+        - Bug fixes where displayed numbers diverge from `ccusage`.
+        - Edge cases in the multi-account / session detection.
+        - Performance work on the JSONL scan.
+        - Documentation / setup-flow improvements.
+        - Customization knobs that already-implemented features expose.
+
+        Examples of v3-shaped work:
+        - New top-level features (alerts, exports, dashboards beyond the existing one).
+        - Network calls, telemetry, hosted price tables.
+        - New integrations (Prometheus, webhooks, Slack).
+        - Adding dependencies (npm, modules, .NET packages).
+
+        Be honest with yourself — a v3-shaped request isn't bad, it's just not
+        going to land in v2. Marking it v3 here keeps the conversation
+        productive instead of stuck.
+      placeholder: |
+        "v2 — this is a reliability fix: the 7d cost diverges from ccusage by ~3%
+        when a session contains both Opus and Haiku turns."
+
+        — or —
+
+        "v3 — I want a Prometheus exporter. I'm filing this knowing it's out of
+        scope for v2; happy to revisit later."
+    validations:
+      required: true
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: |
+        Optional. Links to other statuslines / dashboards / tools that already
+        do this, especially in the Claude Code or ccusage ecosystem. Saves
+        reinventing-the-wheel discussion.
+      placeholder: |
+        - https://github.com/Owloops/claude-powerline does X
+        - https://github.com/ryoppippi/ccusage does Y
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Implementation sketches, tradeoffs you've thought about, related issues, etc.
+    validations:
+      required: false

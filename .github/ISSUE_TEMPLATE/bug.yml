@@ -1,0 +1,135 @@
+name: Bug report
+description: Something rendered wrong, the script errored, or numbers diverged from ccusage. File this so it can be reproduced and fixed.
+title: "[bug]: "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        Please fill in the fields below. A few minutes of context up front saves
+        an hour of back-and-forth. The fields marked **required** below mirror
+        what `CONTRIBUTING.md` already asks you to include — providing them
+        upfront lets a fix land much faster.
+
+        Before submitting, scrub any personal data (project paths you don't
+        want public, OAuth strings, real org names, etc.) from anything you
+        paste.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Short description
+      description: One or two sentences. What did you see? What did you expect?
+      placeholder: "The 5h percentage rendered as `--%` even though Claude Code's own status was showing 42%."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The smallest sequence of actions that triggers the bug. If the bug needs
+        a populated `~/.claude/projects/` to surface, say so.
+      placeholder: |
+        1. Run `.\setup.ps1` from a clean clone.
+        2. Open Claude Code.
+        3. Observe the status line on the first turn of a new conversation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: Expected vs actual
+      description: What did you expect to happen, and what actually happened?
+      placeholder: |
+        Expected: `5h 42% (1.2M, $4.50)`
+        Actual:   `5h --% (1.2M, $4.50)`
+    validations:
+      required: true
+
+  - type: input
+    id: ps-version
+    attributes:
+      label: PowerShell version
+      description: "Run `$PSVersionTable.PSVersion` in the same shell that launched Claude Code and paste the result."
+      placeholder: "5.1.26100.2161"
+    validations:
+      required: true
+
+  - type: input
+    id: cc-version
+    attributes:
+      label: Claude Code version
+      description: "Run `claude --version` and paste the output."
+      placeholder: "1.0.42"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: "Run `winver` or `[Environment]::OSVersion` and paste the result. Include build number if known."
+      placeholder: "Windows 11 Pro 26200 / 10.0.26200"
+    validations:
+      required: true
+
+  - type: textarea
+    id: hook-json
+    attributes:
+      label: Redacted stdin hook JSON
+      description: |
+        Paste the JSON your statusline received on stdin (the hook payload Claude
+        Code injects). **Strip personal data**: replace `session_id`, `current_dir`,
+        and any project paths with redacted placeholders. Keep the structure intact
+        — the `rate_limits` block and `model` are the parts most often needed for
+        triage.
+      render: json
+      placeholder: |
+        {
+          "session_id": "<redacted>",
+          "model": {"display_name": "Opus 4.7"},
+          "workspace": {"current_dir": "<redacted>"},
+          "transcript_path": "<redacted>",
+          "rate_limits": {
+            "five_hour": {"used_percentage": 42, "resets_at": "2026-01-01T00:00:00Z"},
+            "seven_day": {"used_percentage": 17, "resets_at": "2026-01-01T00:00:00Z"}
+          }
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: output-line
+    attributes:
+      label: Relevant statusline output line
+      description: |
+        Optional. Paste the literal line the statusline rendered (ANSI escape codes
+        are fine — they're often the most useful part for triage).
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: debug-log
+    attributes:
+      label: Contents of ~/.claude/statusline-tokens.log
+      description: |
+        Optional. If you re-ran the script with `STATUSLINE_DEBUG=1` set, paste the
+        contents of `~/.claude/statusline-tokens.log` here. Scrub paths you'd
+        rather not publish.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Things you tried, suspicions about the cause, links to related issues, etc.
+    validations:
+      required: false
