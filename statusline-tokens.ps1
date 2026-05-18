@@ -396,13 +396,15 @@ if ($dir)       { $parts += (Color $fgDir $dir) }
 if ($gitBranch) { $parts += (Color $fgGit $gitBranch.Trim()) }
 if ($model)     { $parts += (Color $fgMod $model) }
 
-# U+2014 em-dash, constructed at runtime so the source file's encoding
-# (BOM or no-BOM) doesn't determine whether output renders correctly.
-# Without this, PS 5.1 on a no-BOM file reads '—' as three Windows-1252
-# chars ('â€"') and the status line shows mojibake when percentages are null.
-$emDash = [string][char]0x2014
-if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = $emDash }
-if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = $emDash }
+# Pure-ASCII placeholder for the loading state (percentages not yet supplied
+# by the hook — typical at session start or right after an account switch).
+# Earlier versions used a U+2014 em-dash, but even with the script saved as
+# UTF-8-with-BOM and the glyph constructed via [char]0x2014, some consumers
+# of the status-line output still decoded the bytes as Windows-1252 and
+# rendered 'â€"'. ASCII removes that failure mode entirely.
+$loading = '--%'
+if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = $loading }
+if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = $loading }
 $parts += (Color $fg5h      ("5h {0} ({1} tok, {2})" -f $p5, (Fmt-Tokens $tok5h),      (Fmt-Cost $cost5h)))
 $parts += (Color $fg7d      ("7d {0} ({1} tok, {2})" -f $p7, (Fmt-Tokens $tok7d),      (Fmt-Cost $cost7d)))
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
