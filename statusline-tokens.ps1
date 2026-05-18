@@ -14,7 +14,52 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 
-$stdin = [Console]::In.ReadToEnd()
+# Bounded stdin read: Claude Code pipes JSON, but if the script is launched
+# from a TTY (manual invocation, debug) or the spawn forgot to attach stdin,
+# a blocking ReadToEnd() would hang the statusline forever. The contract
+# is "always print something fast"; bail with a fallback line if no input
+# arrives within 200 ms.
+#
+# Implementation note: [Console]::In.ReadToEndAsync() looks tempting but
+# isn't truly async on PS 5.1's StreamReader-wrapped console stream — the
+# task only completes when the underlying blocking read returns, so
+# Wait(200) routinely waits seconds instead of milliseconds. Going one
+# layer lower to the raw byte stream via OpenStandardInput + BeginRead
+# uses Win32 async pipe I/O, which does honor the timeout.
+if (-not [Console]::IsInputRedirected) {
+    [Console]::Out.Write("statusline-tokens: no hook input")
+    exit 0
+}
+$stdin = ''
+try {
+    $stdinStream = [Console]::OpenStandardInput()
+    $stdinBuf    = New-Object byte[] 4096
+    $stdinMem    = New-Object System.IO.MemoryStream
+    $stdinEnd    = [DateTime]::UtcNow.AddMilliseconds(200)
+    while ($true) {
+        $remaining = [int]([math]::Max(0, ($stdinEnd - [DateTime]::UtcNow).TotalMilliseconds))
+        if ($remaining -le 0) { break }
+        $iar = $stdinStream.BeginRead($stdinBuf, 0, $stdinBuf.Length, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($remaining)) { break }
+        $n = $stdinStream.EndRead($iar)
+        if ($n -le 0) { break }
+        $stdinMem.Write($stdinBuf, 0, $n)
+    }
+    $stdinBytes = $stdinMem.ToArray()
+    # Strip a leading UTF-8 BOM if present — Encoding.UTF8.GetString does
+    # not auto-strip it the way StreamReader does, and PS 5.1's
+    # ConvertFrom-Json rejects a leading U+FEFF with "Invalid JSON
+    # primitive: ." Powershell's piping layer prepends a BOM in 5.1.
+    if ($stdinBytes.Length -ge 3 -and $stdinBytes[0] -eq 0xEF -and $stdinBytes[1] -eq 0xBB -and $stdinBytes[2] -eq 0xBF) {
+        $stdin = [System.Text.Encoding]::UTF8.GetString($stdinBytes, 3, $stdinBytes.Length - 3)
+    } else {
+        $stdin = [System.Text.Encoding]::UTF8.GetString($stdinBytes)
+    }
+} catch { $stdin = '' }
+if ([string]::IsNullOrWhiteSpace($stdin)) {
+    [Console]::Out.Write("statusline-tokens: no hook input")
+    exit 0
+}
 try { $hook = $stdin | ConvertFrom-Json -ErrorAction Stop } catch { $hook = $null }
 
 function Fmt-Tokens([long]$n) {
