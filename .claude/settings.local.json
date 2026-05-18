@@ -11,7 +11,9 @@
       "Bash(claude --version)",
       "Bash(npx --version)",
       "PowerShell(claude *)",
-      "Bash(claude mcp *)"
+      "Bash(claude mcp *)",
+      "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")",
+      "Bash(git log *)"
     ]
   }
 }

@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>statusline-tokens</title>
+<meta name="description" content="A Claude Code status line for Windows that adds raw token counts and dollar cost to the 5-hour and 7-day rate-limit windows. One PowerShell script, no dependencies.">
+<meta property="og:title" content="statusline-tokens">
+<meta property="og:description" content="Adds raw token totals and dollar cost underneath Claude Code's rate-limit percentages. One file, no dependencies.">
+<meta property="og:image" content="./img/statusline.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="%230a0a0a"/><text x="16" y="22" font-family="ui-monospace,monospace" font-size="20" font-weight="600" fill="%23e5e5e5" text-anchor="middle">›</text></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #ffffff;
+  --bg-soft:   #f7f7f7;
+  --bg-code:   #0a0a0a;
+  --border:    #e5e5e5;
+  --border-2:  #d4d4d4;
+
+  --fg:        #0a0a0a;
+  --fg-soft:   #1f1f1f;
+  --fg-muted:  #525252;
+  --fg-faint:  #a3a3a3;
+
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--fg); color: var(--bg); }
+
+a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--border-2); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-color: var(--fg); }
+
+img { display: block; max-width: 100%; }
+
+h1, h2, h3, h4 {
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--fg);
+  margin: 0;
+}
+
+p { margin: 0; }
+
+code, pre, kbd, samp { font-family: var(--mono); font-size: 0.9em; }
+
+p code, li code, td code, span code {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  color: var(--fg-soft);
+}
+
+.shell {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+@media (max-width: 600px) { .shell { padding: 0 20px; } }
+
+/* ─────────────────────────────────────────── NAV */
+.nav { border-bottom: 1px solid var(--border); }
+.nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  gap: 24px;
+}
+.brand {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.brand .caret { color: var(--fg); margin-right: 2px; }
+
+.nav-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.nav-links a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.nav-links a:hover { color: var(--fg); }
+
+@media (max-width: 720px) {
+  .nav-links a:not(.gh) { display: none; }
+}
+.nav-links .gh {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* ─────────────────────────────────────────── HERO */
+.hero { padding: 72px 0 56px; }
+@media (max-width: 720px) { .hero { padding: 48px 0 40px; } }
+
+h1.headline {
+  font-size: clamp(28px, 4.2vw, 40px);
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  font-weight: 600;
+  max-width: 720px;
+  margin: 0 0 20px;
+}
+
+.lede {
+  font-size: 17px;
+  color: var(--fg-muted);
+  max-width: 640px;
+  margin: 0 0 28px;
+  line-height: 1.6;
+}
+
+.meta {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  margin: 0 0 32px;
+}
+.meta .sep { color: var(--border-2); padding: 0 8px; }
+
+.cta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 48px;
+}
+.btn {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.btn.primary {
+  background: var(--bg-code);
+  color: #fff;
+  border-color: var(--bg-code);
+}
+.btn.primary:hover { background: #1f1f1f; border-color: #1f1f1f; }
+.btn.ghost {
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border-2);
+}
+.btn.ghost:hover { border-color: var(--fg-muted); }
+
+/* ─────────────────────────────────────────── TERMINAL */
+.term {
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-code);
+  margin: 0;
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  background: #141414;
+  border-bottom: 1px solid #1f1f1f;
+}
+.term-bar .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #737373;
+}
+.term-body {
+  background: var(--bg-code);
+  padding: 16px 18px 20px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d4d4d4;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a2a transparent;
+}
+.term-body::-webkit-scrollbar { height: 6px; }
+.term-body::-webkit-scrollbar-track { background: transparent; }
+.term-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+.term-prompt { display: flex; align-items: center; gap: 8px; color: #d4d4d4; }
+.term-prompt .glyph { color: #d4d4d4; font-weight: 600; }
+
+.statusline {
+  margin-top: 10px;
+  white-space: nowrap;
+  font-variant-ligatures: none;
+  font-feature-settings: "tnum";
+}
+.statusline.compact { margin-top: 0; }
+.statusline .seg-dir { color: #ffaf5f; }
+.statusline .seg-git { color: #d7af87; }
+.statusline .seg-mod { color: #af87ff; }
+.statusline .seg-5h  { color: #5fd7ff; }
+.statusline .seg-7d  { color: #87af87; }
+.statusline .seg-ctx { color: #87afd7; }
+.statusline .seg-sep { color: #8a8a8a; padding: 0 6px; }
+
+@media (max-width: 720px) {
+  .term-body { padding: 14px 16px 16px; font-size: 12px; }
+}
+
+/* ─────────────────────────────────────────── SECTION */
+.section {
+  padding: 64px 0;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 720px) { .section { padding: 48px 0; } }
+
+.section h2 {
+  font-size: clamp(22px, 2.6vw, 28px);
+  letter-spacing: -0.02em;
+  margin: 0 0 14px;
+}
+.section .kicker {
+  font-size: 16px;
+  color: var(--fg-muted);
+  margin: 0 0 32px;
+  max-width: 640px;
+  line-height: 1.6;
+}
+
+/* ─────────────────────────────────────────── COMPARE TABLE */
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  border: 1px solid var(--border);
+}
+.compare thead th {
+  text-align: left;
+  padding: 12px 14px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+}
+.compare td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-soft);
+  vertical-align: middle;
+}
+.compare tr:last-child td { border-bottom: 0; }
+.compare td.feat { color: var(--fg); width: 38%; }
+.tick { color: var(--fg); }
+.cross { color: var(--fg-faint); }
+
+@media (max-width: 720px) {
+  .compare, .compare thead, .compare tbody, .compare tr, .compare td, .compare th { display: block; }
+  .compare thead { display: none; }
+  .compare tr { border-bottom: 1px solid var(--border); padding: 4px 0; }
+  .compare tr:last-child { border-bottom: 0; }
+  .compare td {
+    display: grid; grid-template-columns: 1fr auto; gap: 12px;
+    padding: 8px 14px;
+    border-bottom: 0;
+  }
+  .compare td.feat { background: var(--bg-soft); font-weight: 500; grid-template-columns: 1fr; }
+  .compare td::before { content: attr(data-col); color: var(--fg-muted); font-size: 12px; }
+  .compare td.feat::before { display: none; }
+}
+
+/* ─────────────────────────────────────────── ANATOMY TABLE */
+.dict {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  border: 1px solid var(--border);
+  margin-top: 28px;
+}
+.dict thead th {
+  text-align: left;
+  padding: 12px 14px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+}
+.dict td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.dict tr:last-child td { border-bottom: 0; }
+.dict .seg {
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.dict .seg .swatch {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.dict .sample { font-family: var(--mono); font-size: 13px; color: var(--fg-soft); }
+.dict .source { color: var(--fg-muted); }
+
+@media (max-width: 720px) {
+  .dict, .dict thead, .dict tbody, .dict tr, .dict td, .dict th { display: block; }
+  .dict thead { display: none; }
+  .dict tr { border-bottom: 1px solid var(--border); padding: 12px 14px; }
+  .dict tr:last-child { border-bottom: 0; }
+  .dict td { border: 0; padding: 4px 0; }
+  .dict td::before { content: attr(data-col) " "; color: var(--fg-muted); font-size: 12px; margin-right: 6px; }
+  .dict .seg::before { display: none; }
+}
+
+/* ─────────────────────────────────────────── INSTALL */
+.install {
+  list-style: decimal;
+  padding-left: 22px;
+  margin: 0;
+}
+.install > li {
+  margin-bottom: 28px;
+}
+.install > li:last-child { margin-bottom: 0; }
+.install h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.install p {
+  font-size: 15px;
+  color: var(--fg-muted);
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+.install pre {
+  margin: 0;
+  background: var(--bg-code);
+  color: #d4d4d4;
+  border-radius: 6px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  border: 1px solid #1f1f1f;
+}
+.install pre .c { color: #737373; }
+.install pre .k { color: #93c5fd; }
+.install pre .s { color: #86efac; }
+.install pre .x { color: #f0d399; }
+
+/* ─────────────────────────────────────────── METHODOLOGY */
+.method-text p {
+  font-size: 16px;
+  color: var(--fg-soft);
+  line-height: 1.65;
+  margin: 0 0 14px;
+  max-width: 720px;
+}
+.method-text p:last-child { margin-bottom: 0; }
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 28px 0 0;
+  counter-reset: step;
+  border-top: 1px solid var(--border);
+}
+.steps li {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.steps li::before {
+  counter-increment: step;
+  content: counter(step, decimal-leading-zero);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  padding-top: 2px;
+}
+.steps li strong {
+  display: block;
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+.steps li .meta {
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+
+.note {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border-left: 2px solid var(--border-2);
+  background: var(--bg-soft);
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+}
+
+/* ─────────────────────────────────────────── FOOT */
+.foot {
+  border-top: 1px solid var(--border);
+  padding: 28px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.foot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.foot a { color: var(--fg-muted); text-decoration: none; }
+.foot a:hover { color: var(--fg); text-decoration: underline; }
+.foot .sep { color: var(--border-2); padding: 0 8px; }
+
+/* ─────────────────────────────────────────── A11Y */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="shell nav-row">
+    <a class="brand" href="./"><span class="caret">›</span> statusline-tokens</a>
+    <div class="nav-links">
+      <a href="#why">Why</a>
+      <a href="#anatomy">Anatomy</a>
+      <a href="#install">Install</a>
+      <a href="#methodology">Methodology</a>
+      <a class="gh" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="shell">
+    <h1 class="headline">
+      A Claude Code status line that shows token totals and dollar cost.
+    </h1>
+
+    <p class="lede">
+      Claude Code reports rate-limit percentages. <code>statusline-tokens</code> adds the numbers underneath: raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus current context size. One PowerShell script, no runtime.
+    </p>
+
+    <p class="meta">
+      Windows <span class="sep">/</span> PowerShell 5.1+ <span class="sep">/</span> MIT
+    </p>
+
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn ghost" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">View source</a>
+    </div>
+
+    <figure class="term" aria-label="The status line as rendered in Claude Code.">
+      <div class="term-bar"><span class="label">claude-code · powershell</span></div>
+      <div class="term-body">
+        <div class="term-prompt"><span class="glyph">›</span></div>
+        <div class="statusline">
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 4.7 (1M context)</span><span class="seg-sep">|</span><span class="seg-5h">5h 97% (103.8M tok, $300)</span><span class="seg-sep">|</span><span class="seg-7d">7d 25% (149.7M tok, $456)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+        </div>
+      </div>
+    </figure>
+  </div>
+</header>
+
+<section class="section" id="why">
+  <div class="shell">
+    <h2>Why</h2>
+    <p class="kicker">
+      Claude Code reports rate-limit percentages but no raw token counts. Other status-line packages mirror the percentages. None tell you what a session is costing.
+    </p>
+
+    <table class="compare">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Default</th>
+          <th>claude-powerline</th>
+          <th>statusline-tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="feat">5h / 7d window %</td>
+          <td data-col="Default"><span class="cross">—</span></td>
+          <td data-col="claude-powerline"><span class="tick">✓</span></td>
+          <td data-col="statusline-tokens"><span class="tick">✓</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Raw token totals (5h / 7d)</td>
+          <td data-col="Default"><span class="cross">—</span></td>
+          <td data-col="claude-powerline"><span class="cross">—</span></td>
+          <td data-col="statusline-tokens"><span class="tick">✓</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Pay-per-token cost ($)</td>
+          <td data-col="Default"><span class="cross">—</span></td>
+          <td data-col="claude-powerline"><span class="cross">—</span></td>
+          <td data-col="statusline-tokens"><span class="tick">✓</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Ephemeral cache pricing (5m / 1h)</td>
+          <td data-col="Default"><span class="cross">—</span></td>
+          <td data-col="claude-powerline"><span class="cross">—</span></td>
+          <td data-col="statusline-tokens"><span class="tick">✓</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Per-turn context tokens</td>
+          <td data-col="Default"><span class="cross">—</span></td>
+          <td data-col="claude-powerline"><span class="tick">✓</span></td>
+          <td data-col="statusline-tokens"><span class="tick">✓</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Runtime dependency</td>
+          <td data-col="Default">None</td>
+          <td data-col="claude-powerline">Node</td>
+          <td data-col="statusline-tokens">Single <code>.ps1</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section" id="anatomy">
+  <div class="shell">
+    <h2>Anatomy</h2>
+    <p class="kicker">
+      Six segments. Each uses a different ANSI 256-color index so the bar reads at a glance.
+    </p>
+
+    <figure class="term" aria-label="The status line, isolated.">
+      <div class="term-body">
+        <div class="statusline compact">
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 4.7 (1M context)</span><span class="seg-sep">|</span><span class="seg-5h">5h 97% (103.8M tok, $300)</span><span class="seg-sep">|</span><span class="seg-7d">7d 25% (149.7M tok, $456)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+        </div>
+      </div>
+    </figure>
+
+    <table class="dict">
+      <thead>
+        <tr>
+          <th style="width: 22%;">Segment</th>
+          <th style="width: 28%;">Sample</th>
+          <th>Source</th>
+          <th style="width: 64px;">ANSI</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #ffaf5f;"></span>working dir</td>
+          <td data-col="Sample" class="sample">claude-statusline-tokens</td>
+          <td data-col="Source" class="source"><code>workspace.current_dir</code>, <code>Split-Path -Leaf</code></td>
+          <td data-col="ANSI" class="source">215</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #d7af87;"></span>git branch</td>
+          <td data-col="Sample" class="sample">main</td>
+          <td data-col="Source" class="source"><code>git rev-parse --abbrev-ref HEAD</code></td>
+          <td data-col="ANSI" class="source">180</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #af87ff;"></span>model</td>
+          <td data-col="Sample" class="sample">Opus 4.7 (1M context)</td>
+          <td data-col="Source" class="source"><code>model.display_name</code> from hook</td>
+          <td data-col="ANSI" class="source">141</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #5fd7ff;"></span>5h window</td>
+          <td data-col="Sample" class="sample">97% (103.8M tok, $300)</td>
+          <td data-col="Source" class="source"><code>rate_limits.five_hour</code> + transcript scan, API-rate cost</td>
+          <td data-col="ANSI" class="source">81</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #87af87;"></span>7d window</td>
+          <td data-col="Sample" class="sample">25% (149.7M tok, $456)</td>
+          <td data-col="Source" class="source"><code>rate_limits.seven_day</code> + transcript scan, API-rate cost</td>
+          <td data-col="ANSI" class="source">108</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg"><span class="swatch" style="background: #87afd7;"></span>context</td>
+          <td data-col="Sample" class="sample">63.0k</td>
+          <td data-col="Source" class="source">last <code>usage</code> block in the current transcript</td>
+          <td data-col="ANSI" class="source">110</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section" id="install">
+  <div class="shell">
+    <h2>Install</h2>
+    <p class="kicker">
+      Two files, one restart. Works in Windows Terminal, the VS Code integrated terminal, and any 256-color ANSI host.
+    </p>
+
+    <ol class="install">
+      <li>
+        <h3>Copy the script.</h3>
+        <p>Place it in <code>%USERPROFILE%\.claude\</code>, next to your <code>settings.json</code>.</p>
+<pre><span class="x">Copy-Item</span> statusline-tokens.ps1 <span class="s">"$env:USERPROFILE\.claude\"</span></pre>
+      </li>
+      <li>
+        <h3>Wire it up.</h3>
+        <p>Add (or replace) the <code>statusLine</code> block in <code>settings.json</code>.</p>
+<pre>{
+  <span class="k">"statusLine"</span>: {
+    <span class="k">"type"</span>: <span class="s">"command"</span>,
+    <span class="k">"command"</span>: <span class="s">"powershell -NoProfile -File %USERPROFILE%\\.claude\\statusline-tokens.ps1"</span>,
+    <span class="k">"padding"</span>: 0
+  }
+}</pre>
+      </li>
+      <li>
+        <h3>Restart Claude Code.</h3>
+        <p>The bar appears on the next prompt cycle. Cold render is ~1.0s, warm is ~0.3s (20-second JSON cache).</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section class="section" id="methodology">
+  <div class="shell">
+    <h2>Methodology</h2>
+    <p class="kicker">
+      For every <code>.jsonl</code> line carrying a <code>"usage"</code> block in <code>~/.claude/projects/**/*</code>, the script does the following.
+    </p>
+
+    <div class="method-text">
+      <p>
+        Percentages are not computed locally. They come straight from <code>rate_limits.five_hour.used_percentage</code> and its 7-day sibling — the same authoritative numbers Claude Code uses internally for throttling decisions.
+      </p>
+      <p>
+        Token totals are summed locally, the same way <code>ccusage</code> does it: a recursive scan of every transcript, regex-extracted, deduplicated by <code>message.id</code>, windowed by ISO timestamp.
+      </p>
+      <p>
+        Cost is computed per turn using the model family detected on that transcript line (Opus, Sonnet, or Haiku) and the matching input, output, and cache rates. Ephemeral cache creation bills at the 5-minute rate when the breakdown isn't exposed — the API default for unflagged blocks, and the cheaper of the two tiers.
+      </p>
+    </div>
+
+    <ol class="steps">
+      <li><span><strong>Parse timestamp.</strong><span class="meta">Skip the line if it's outside the 7-day cutoff.</span></span></li>
+      <li><span><strong>Dedupe by <code>message.id</code>.</strong><span class="meta">Assistant turns log once per content block; raw summation would triple-count.</span></span></li>
+      <li><span><strong>Sum the four fields.</strong><span class="meta">input + output + cache_creation + cache_read.</span></span></li>
+      <li><span><strong>Price it.</strong><span class="meta">Detect model family on this transcript line; apply the matching API rate.</span></span></li>
+      <li><span><strong>Window the totals.</strong><span class="meta">Add to 7d. If the timestamp also clears the 5-hour cutoff, add to 5h.</span></span></li>
+    </ol>
+
+    <p class="note">
+      Field-level regex extraction is ~10× faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A 20-second JSON cache keeps the bar snappy on every re-render.
+    </p>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="shell foot-row">
+    <div>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens">GitHub</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues">Issues</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/LICENSE">MIT</a>
+    </div>
+    <div>© Gabriel Dalton</div>
+  </div>
+</footer>
+
+</body>
+</html>
