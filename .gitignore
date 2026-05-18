@@ -11,3 +11,9 @@ statusline-accounts.json
 *.swo
 .DS_Store
 Thumbs.db
+
+# Node tooling (scripts/ Playwright helpers)
+node_modules/
+
+# One-shot logs from scripts/create-issues.ps1
+.issues-created.log
