@@ -1,10 +1,21 @@
 # claude-statusline-tokens
 
-A Claude Code status line for Windows that shows **percentage, raw token count, and pay-per-token cost** for your 5-hour and 7-day rate-limit windows.
+> A Claude Code status line for Windows that shows **percentage, raw token count, and pay-per-token cost** for your 5-hour and 7-day rate-limit windows.
+
+<p>
+  <img alt="platform: windows" src="https://img.shields.io/badge/platform-windows-0078D6?logo=windows&logoColor=white">
+  <img alt="powershell 5.1+" src="https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white">
+  <img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green">
+  <a href="https://Gabriel-Dalton.github.io/claude-statusline-tokens/"><img alt="landing page" src="https://img.shields.io/badge/landing-page-5fd7ff"></a>
+</p>
+
+![status line screenshot](docs/img/statusline.png)
 
 ```
 redesign-2026 | main | Opus 4.7 | 5h 42% (1.2M tok, $4.50) | 7d 17% (4.8M tok, $18.20) | ctx 23k
 ```
+
+**[→ See the full landing page with anatomy + features](https://Gabriel-Dalton.github.io/claude-statusline-tokens/)**
 
 ## Why
 
@@ -14,6 +25,7 @@ This script combines both:
 
 - **Percentages** come straight from `rate_limits.five_hour.used_percentage` and `rate_limits.seven_day.used_percentage` (the same numbers Claude Code itself uses).
 - **Token totals** are summed locally from `~/.claude/projects/**/*.jsonl` over the rolling 5h and 7d windows. Same approach `ccusage` uses, deduped by `message.id` so multi-block assistant turns don't triple-count.
+- **Cost** is computed per-turn at API rates, with the correct cache-write rate (5m vs 1h ephemeral) when the transcript exposes it.
 
 A 20-second cache keeps it snappy (`~/.claude/statusline-tokens.cache.json`).
 
@@ -77,7 +89,8 @@ For every `.jsonl` line that contains a `"usage"` block:
 2. Skip the line if older than the 7-day cutoff.
 3. Skip if the `message.id` (e.g. `msg_011cYfLg7u1svRVTnzarW1ft`) has already been counted — assistant turns log once per content block (`thinking`, `tool_use`, ...) and each entry repeats the same `usage`, so naive summing triples the real number.
 4. Sum `input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
-5. Add to the 7d total; add to the 5h total if the timestamp is also inside the 5-hour window.
+5. Price it: detect the model family from the transcript line and bill input, output, cache-read, and cache-write (5m vs 1h ephemeral) at the right rate.
+6. Add to the 7d total; add to the 5h total if the timestamp is also inside the 5-hour window.
 
 Regex extraction beats `ConvertFrom-Json` per line by ~10x on a 20MB transcript pile.
 
@@ -85,7 +98,7 @@ Regex extraction beats `ConvertFrom-Json` per line by ~10x on a 20MB transcript 
 
 - **Windows-only.** The script uses PowerShell-specific APIs (`[Console]::In`, `[System.IO.File]::ReadLines`, etc.) and assumes the Claude Code projects directory layout. A bash/zsh port would not be hard — feel free to send a PR.
 - **Tokens vs. limits.** Anthropic's quota math isn't a straight sum of input + output + cache; cache reads are billed at a discount and cache creation at a premium. The percentages here are the authoritative number for "am I about to hit a limit"; the token totals are an *activity* signal, not a billing prediction.
-- **First render after install is slow** (~1s) — that's PowerShell startup plus the cold transcript scan. Subsequent renders hit the cache (~0.9s, mostly PowerShell startup itself).
+- **First render after install is slow** (~1s) — PowerShell startup plus a full cold scan of every transcript in `~/.claude/projects/`. Cached renders inside the 20-second TTL skip the scan and take roughly the time of PowerShell startup itself (a few hundred ms).
 
 ## License
 

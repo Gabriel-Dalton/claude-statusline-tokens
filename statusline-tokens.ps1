@@ -4,7 +4,6 @@
 # by Claude Code on stdin. Tokens are summed from ~/.claude/projects/**/*.jsonl
 # entries whose timestamps fall inside the rolling 5h / 7d window.
 
-$ErrorActionPreference = 'SilentlyContinue'
 [System.Threading.Thread]::CurrentThread.CurrentCulture =
     [System.Globalization.CultureInfo]::InvariantCulture
 
@@ -94,6 +93,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
 
     foreach ($f in $files) {
+        $reader = $null
         try {
             $reader = [System.IO.File]::OpenText($f.FullName)
             while (-not $reader.EndOfStream) {
@@ -112,12 +112,14 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                 # Dedupe by message id — the same assistant turn is logged
                 # once per content block (thinking, tool_use, ...) and each
                 # log carries the same usage. Counting them all triples the
-                # number.
+                # number. Check the key now but only commit it after the
+                # line is proven to have real usage data, so a malformed or
+                # zero-usage line can't poison the dedupe set.
+                $key = $null
                 $mId = $rxMsgId.Match($line)
                 if ($mId.Success) {
                     $key = $mId.Groups[1].Value
                     if ($seen.ContainsKey($key)) { continue }
-                    $seen[$key] = $true
                 }
 
                 $tIn = 0L; $tOut = 0L; $tCacheC = 0L; $tCacheR = 0L; $t5m = 0L; $t1h = 0L
@@ -130,14 +132,16 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
 
                 $sum = $tIn + $tOut + $tCacheC + $tCacheR
                 if ($sum -le 0) { continue }
+                if ($key) { $seen[$key] = $true }
 
                 # Per-turn cost using this turn's model
                 $modelId = ''
                 $mm = $rxModel.Match($line); if ($mm.Success) { $modelId = $mm.Groups[1].Value }
                 $p = $prices[(Get-ModelFamily $modelId)]
                 # If the 5m/1h breakdown isn't present (older transcripts),
-                # fall back to charging all cache creation at the 5m rate
-                # (the API default and the cheaper of the two).
+                # charge all cache creation at the 5m rate — that's the default
+                # TTL for unflagged cache_control blocks, and the cheaper of
+                # the two ephemeral tiers.
                 if (($t5m + $t1h) -le 0) { $t5m = $tCacheC; $t1h = 0L }
                 $cost = (
                     $tIn     * $p.input     +
@@ -160,14 +164,20 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         }
     }
 
+    # Write atomically — two concurrent statusline invocations would otherwise
+    # race on Set-Content's truncate-then-write, and the slower one could
+    # overwrite fresher numbers with stale ones. tmp + Move-Item -Force is
+    # atomic on NTFS.
     try {
+        $tmpCache = "$cachePath.tmp"
         @{
             computedAtUtc = $nowUtc.ToString('o')
             tok5h         = $tok5h
             tok7d         = $tok7d
             cost5h        = $cost5h
             cost7d        = $cost7d
-        } | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
+        } | ConvertTo-Json -Compress | Set-Content -Path $tmpCache -Encoding utf8
+        Move-Item -Path $tmpCache -Destination $cachePath -Force
     } catch {}
 }
 
@@ -206,8 +216,17 @@ if ($hook -and $hook.workspace -and $hook.workspace.current_dir) {
 $gitBranch = ''
 $cwd = $null
 if ($hook) { $cwd = $hook.workspace.current_dir; if (-not $cwd) { $cwd = $hook.cwd } }
-if ($cwd -and (Test-Path $cwd)) {
-    try { $gitBranch = (& git -C $cwd rev-parse --abbrev-ref HEAD 2>$null) } catch {}
+# Reject paths whose first char is '-' — git would parse them as a flag for -C
+# (argument injection). Modern git mitigates running in untrusted directories
+# via safe.directory (CVE-2022-24765), but this guard is essentially free.
+if ($cwd -and ($cwd[0] -ne '-') -and (Test-Path -LiteralPath $cwd)) {
+    try {
+        $gitBranch = (& git -C $cwd rev-parse --abbrev-ref HEAD 2>$null)
+        # Detached HEAD returns the literal string "HEAD"; show short SHA instead.
+        if ($gitBranch -eq 'HEAD') {
+            $gitBranch = (& git -C $cwd rev-parse --short HEAD 2>$null)
+        }
+    } catch {}
 }
 
 $model = ''
