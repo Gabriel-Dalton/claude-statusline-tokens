@@ -19,6 +19,75 @@ function Write-DebugLog {
     # Intentional no-op until M2-05.
 }
 
+# Safe dotted-path accessor for the parsed hook JSON (M1-10).
+# Anthropic can rename or remove any field in Claude Code's stdin hook
+# payload between releases; reaching into $hook.X.Y directly silently
+# produces $null when the path is broken, which downstream segments then
+# render as blanks or zeroes with no indication of why. Get-HookField
+# walks the dotted path defensively, returns $Fallback when any segment
+# is missing, and emits exactly one Write-DebugLog line per fallback
+# (scope 'hook-field-missing') so the regression is surface-able once
+# M2-05 wires the log file.
+function Get-HookField {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][AllowNull()]$Hook,
+        [Parameter(Mandatory=$true)][string]$DottedPath,
+        [Parameter()]$Fallback = $null,
+        [Parameter()][switch]$NoLog
+    )
+    $node = $Hook
+    if ($null -eq $node) {
+        if (-not $NoLog) {
+            Write-DebugLog "missing hook.$DottedPath (no hook)" -Scope 'hook-field-missing'
+        }
+        return $Fallback
+    }
+    foreach ($seg in $DottedPath.Split('.')) {
+        if ($null -eq $node) {
+            if (-not $NoLog) {
+                Write-DebugLog "missing hook.$DottedPath" -Scope 'hook-field-missing'
+            }
+            return $Fallback
+        }
+        # PSCustomObject (the shape ConvertFrom-Json returns) exposes
+        # PSObject.Properties; missing properties give $null without
+        # throwing. Test for the property's existence before reading so
+        # we don't accept a property that's literally set to $null vs
+        # one that's absent. Both behave identically for our callers
+        # (the fallback path fires), but the distinction matters for
+        # future consumers that might want to differentiate.
+        $hasProp = $false
+        if ($node -is [System.Management.Automation.PSCustomObject]) {
+            $hasProp = ($node.PSObject.Properties.Match($seg).Count -gt 0)
+        } elseif ($node -is [System.Collections.IDictionary]) {
+            $hasProp = $node.Contains($seg)
+        } else {
+            # Last resort: try the property via reflection. Don't blow
+            # up on primitive types (strings, ints) that happen to land
+            # here when a dotted path runs past a leaf.
+            try { $hasProp = ($null -ne $node.$seg) } catch { $hasProp = $false }
+        }
+        if (-not $hasProp) {
+            if (-not $NoLog) {
+                Write-DebugLog "missing hook.$DottedPath" -Scope 'hook-field-missing'
+            }
+            return $Fallback
+        }
+        $node = $node.$seg
+    }
+    if ($null -eq $node) {
+        # The full path resolved but the leaf itself is JSON null. For
+        # our callers that's indistinguishable from "missing" — surface
+        # the fallback and log.
+        if (-not $NoLog) {
+            Write-DebugLog "missing hook.$DottedPath (null leaf)" -Scope 'hook-field-missing'
+        }
+        return $Fallback
+    }
+    return $node
+}
+
 # Without this, non-ASCII glyphs like ⎇ ✱ get downgraded to '?' by the
 # system code page on Windows when PowerShell flushes stdout.
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -77,6 +146,83 @@ if ([string]::IsNullOrWhiteSpace($stdin)) {
 try { $hook = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
     Write-DebugLog $_ -Scope 'hook-parse'
     $hook = $null
+}
+
+# M1-10: normalize every $hook.X access through documented fallbacks so a
+# future Anthropic rename/removal degrades visibly (one debug-log line per
+# missing field) instead of silently emitting blanks. Downstream code reads
+# $hookFields, not $hook, so the fallback policy lives in one place. When
+# $hook itself is $null (parse failure — the no-stdin path already
+# short-circuited above), every Get-HookField call resolves to its
+# fallback and logs once; the statusline still prints something sensible.
+
+# model.id first — model.display_name needs it as a fallback. Get-HookField
+# is called with -NoLog when we're only using the field as a fallback
+# source for another field, to avoid logging the same absence twice.
+$modelIdRaw = Get-HookField $hook 'model.id' -Fallback $null -NoLog
+
+# Derive a friendly fallback name from model.id by stripping the
+# 'claude-' prefix and title-casing the family segment. 'claude-opus-4-7'
+# becomes 'Opus 4 7'; 'claude-sonnet-4-5' becomes 'Sonnet 4 5'. Crude but
+# strictly better than emitting the raw id or "model?" when display_name
+# is the only missing field.
+function script:Format-ModelIdAsName([string]$id) {
+    if ([string]::IsNullOrEmpty($id)) { return $null }
+    $name = $id
+    if ($name.StartsWith('claude-')) { $name = $name.Substring(7) }
+    # First segment is the family (opus/sonnet/haiku/etc.); title-case
+    # it, leave version tokens (4-7, 3-5) as-is.
+    $parts = $name.Split('-')
+    if ($parts.Length -gt 0 -and $parts[0].Length -gt 0) {
+        $parts[0] = $parts[0].Substring(0,1).ToUpper() + $parts[0].Substring(1)
+    }
+    return ($parts -join ' ')
+}
+
+$modelDisplay = Get-HookField $hook 'model.display_name' -Fallback $null
+if ([string]::IsNullOrEmpty($modelDisplay)) {
+    $derived = Format-ModelIdAsName $modelIdRaw
+    if (-not [string]::IsNullOrEmpty($derived)) {
+        $modelDisplay = $derived
+    } else {
+        $modelDisplay = 'model?'
+    }
+}
+if ([string]::IsNullOrEmpty($modelIdRaw)) { $modelIdResolved = 'unknown' } else { $modelIdResolved = $modelIdRaw }
+
+# cwd resolution: hook.workspace.current_dir wins, then hook.cwd, then the
+# current process cwd. Get-Location is dependable: PowerShell always has
+# one. Logging differs by site: we don't fire 'hook-field-missing' for
+# workspace.current_dir because Claude Code only populates it when a
+# workspace is active — its absence is normal, not a regression signal.
+$cwdResolved = Get-HookField $hook 'workspace.current_dir' -Fallback $null -NoLog
+if ([string]::IsNullOrEmpty($cwdResolved)) {
+    $cwdResolved = Get-HookField $hook 'cwd' -Fallback $null
+}
+if ([string]::IsNullOrEmpty($cwdResolved)) {
+    $cwdResolved = (Get-Location).Path
+}
+
+$transcriptPathResolved = Get-HookField $hook 'transcript_path' -Fallback $null
+$sessionIdResolved      = Get-HookField $hook 'session_id'      -Fallback ''
+
+# rate_limits.* stay $null on absence — downstream renders '--%' for
+# null already, so the access just needs to not blow up.
+$pct5hRaw    = Get-HookField $hook 'rate_limits.five_hour.used_percentage' -Fallback $null
+$pct7dRaw    = Get-HookField $hook 'rate_limits.seven_day.used_percentage' -Fallback $null
+$resets5hRaw = Get-HookField $hook 'rate_limits.five_hour.resets_at'       -Fallback $null
+$resets7dRaw = Get-HookField $hook 'rate_limits.seven_day.resets_at'       -Fallback $null
+
+$hookFields = [pscustomobject]@{
+    transcript_path     = $transcriptPathResolved
+    cwd                 = $cwdResolved
+    session_id          = $sessionIdResolved
+    model_display_name  = $modelDisplay
+    model_id            = $modelIdResolved
+    pct5h               = $pct5hRaw
+    pct7d               = $pct7dRaw
+    resets5h            = $resets5hRaw
+    resets7d            = $resets7dRaw
 }
 
 function Fmt-Tokens([long]$n) {
@@ -618,12 +764,11 @@ if ($turns -and $turns.Count -gt 0) {
 }
 
 # --- native percentages from hook stdin -----------------------------------
-$pct5h = $null
-$pct7d = $null
-if ($hook -and $hook.rate_limits) {
-    if ($hook.rate_limits.five_hour) { $pct5h = $hook.rate_limits.five_hour.used_percentage }
-    if ($hook.rate_limits.seven_day) { $pct7d = $hook.rate_limits.seven_day.used_percentage }
-}
+# Resolved during the M1-10 normalization block at the top: missing fields
+# arrive here as $null, with one debug-log line already emitted per
+# absence. Downstream rendering treats $null as "loading" and prints '--%'.
+$pct5h = $hookFields.pct5h
+$pct7d = $hookFields.pct7d
 
 # Always rewrite the cache so claude-dashboard.ps1 (which reads this same
 # file) picks up fresh percentages on every Claude Code turn, even on cache
@@ -672,9 +817,9 @@ try {
 # full walk if the active transcript isn't in our per-file cache
 # (e.g. brand-new session whose file post-dates the last scan).
 $ctxTokens = [long]0
-if ($hook -and $hook.transcript_path -and (Test-Path $hook.transcript_path)) {
+if ($hookFields.transcript_path -and (Test-Path $hookFields.transcript_path)) {
     $lastUsageLine = $null
-    $tpath = [string]$hook.transcript_path
+    $tpath = [string]$hookFields.transcript_path
     # Look up by exact path first, then by FullName-normalised form —
     # transcript_path arrives from the hook as the same string Claude
     # Code uses, but our scan keyed by FileInfo.FullName which
@@ -721,16 +866,14 @@ if ($hook -and $hook.transcript_path -and (Test-Path $hook.transcript_path)) {
 }
 
 # --- working dir + git ----------------------------------------------------
+# $hookFields.cwd is guaranteed non-null (M1-10): falls back to
+# (Get-Location).Path if both hook.workspace.current_dir and hook.cwd are
+# missing, so the statusline always renders a directory segment.
 $dir = ''
-if ($hook -and $hook.workspace -and $hook.workspace.current_dir) {
-    $dir = Split-Path -Leaf $hook.workspace.current_dir
-} elseif ($hook -and $hook.cwd) {
-    $dir = Split-Path -Leaf $hook.cwd
-}
+if ($hookFields.cwd) { $dir = Split-Path -Leaf $hookFields.cwd }
 
 $gitBranch = ''
-$cwd = $null
-if ($hook) { $cwd = $hook.workspace.current_dir; if (-not $cwd) { $cwd = $hook.cwd } }
+$cwd = $hookFields.cwd
 # Read .git/HEAD directly instead of shelling out to git. Shelling out
 # costs ~30-80 ms per render, fragments the rendering budget, and leaks
 # $LASTEXITCODE up to the caller. .git/HEAD is a one-line file:
@@ -774,8 +917,10 @@ if ($cwd -and (Test-Path $cwd)) {
     } catch { Write-DebugLog $_ -Scope 'git-head' }
 }
 
-$model = ''
-if ($hook -and $hook.model -and $hook.model.display_name) { $model = $hook.model.display_name }
+# M1-10: $hookFields.model_display_name is guaranteed non-empty —
+# falls back through model.id -> 'model?' so the statusline always
+# prints a model segment, even when the hook payload is empty.
+$model = $hookFields.model_display_name
 
 # --- compose --------------------------------------------------------------
 $esc = [char]27
