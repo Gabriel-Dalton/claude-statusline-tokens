@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git mv *)",
+      "mcp__claude_ai_Figma__whoami",
+      "Bash(git config *)",
+      "PowerShell(Get-Content *)"
+    ]
+  }
+}

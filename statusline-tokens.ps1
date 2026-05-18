@@ -4,6 +4,7 @@
 # by Claude Code on stdin. Tokens are summed from ~/.claude/projects/**/*.jsonl
 # entries whose timestamps fall inside the rolling 5h / 7d window.
 
+$ErrorActionPreference = 'SilentlyContinue'
 [System.Threading.Thread]::CurrentThread.CurrentCulture =
     [System.Globalization.CultureInfo]::InvariantCulture
 
@@ -45,17 +46,124 @@ function Fmt-Cost([double]$d) {
 }
 
 # --- token sums across the rolling windows ---------------------------------
-$nowUtc  = [DateTime]::UtcNow
-$cut5h   = $nowUtc.AddHours(-5)
-$cut7d   = $nowUtc.AddDays(-7)
+$nowUtc = [DateTime]::UtcNow
+$cut5h  = $nowUtc.AddHours(-5)
+$cut7d  = $nowUtc.AddDays(-7)
 
-$tok5h = [long]0
-$tok7d = [long]0
-$cost5h = 0.0
-$cost7d = 0.0
+# "Session" = the most recent contiguous burst of activity, walking backward
+# until we hit a gap larger than this many minutes between consecutive turns.
+# This survives clock-midnight, Claude Code restarts, and account switches —
+# it's about *your* continuous work, not the calendar or the active account.
+$sessionGapMinutes = 30
 
-$projectsDir = Join-Path $env:USERPROFILE '.claude\projects'
-$cachePath   = Join-Path $env:USERPROFILE '.claude\statusline-tokens.cache.json'
+$tok5h      = [long]0; $cost5h      = 0.0
+$tok7d      = [long]0; $cost7d      = 0.0
+$tokSession = [long]0; $costSession = 0.0   # all accounts contributing to the current burst
+
+$projectsDir       = Join-Path $env:USERPROFILE '.claude\projects'
+$cachePath         = Join-Path $env:USERPROFILE '.claude\statusline-tokens.cache.json'
+$globalConfigPath  = Join-Path $env:USERPROFILE '.claude.json'
+$accountsPath      = Join-Path $env:USERPROFILE '.claude\statusline-accounts.json'
+
+# --- detect current account ----------------------------------------------
+# ~/.claude.json carries oauthAccount.{organizationUuid, emailAddress, ...}
+# We use organizationUuid as the stable identifier — it survives token
+# refreshes and only changes when you actually sign into a different
+# account/org.
+#
+# We can't ConvertFrom-Json the whole file: ~/.claude.json contains a
+# projects map keyed by absolute path, and Windows-case-insensitive
+# filesystems produce duplicate keys (e.g. "...\GitHub\VCASSE" and
+# "...\github\vcasse") that PS 5.1's parser rejects. Instead, walk the
+# JSON to extract just the oauthAccount object and parse that.
+function Get-JsonObject([string]$content, [string]$keyName) {
+    $needle = '"' + $keyName + '"'
+    $start = $content.IndexOf($needle)
+    if ($start -lt 0) { return $null }
+    $braceStart = $content.IndexOf('{', $start)
+    if ($braceStart -lt 0) { return $null }
+    $depth = 0; $inStr = $false; $esc = $false
+    for ($i = $braceStart; $i -lt $content.Length; $i++) {
+        $c = $content[$i]
+        if ($esc) { $esc = $false; continue }
+        if ($inStr) {
+            if ($c -eq '\') { $esc = $true; continue }
+            if ($c -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($c -eq '"') { $inStr = $true; continue }
+        if ($c -eq '{') { $depth++ }
+        elseif ($c -eq '}') {
+            $depth--
+            if ($depth -eq 0) {
+                return $content.Substring($braceStart, $i - $braceStart + 1)
+            }
+        }
+    }
+    return $null
+}
+
+$currentAccount = $null
+if (Test-Path $globalConfigPath) {
+    try {
+        $raw = Get-Content -Raw $globalConfigPath
+        $block = Get-JsonObject $raw 'oauthAccount'
+        if ($block) {
+            $oa = $block | ConvertFrom-Json
+            if ($oa.organizationUuid) {
+                $currentAccount = @{
+                    org   = [string]$oa.organizationUuid
+                    email = [string]$oa.emailAddress
+                    name  = [string]$oa.organizationName
+                }
+            }
+        }
+    } catch {}
+}
+
+# --- load and update account checkpoints ---------------------------------
+# Append a new checkpoint whenever the current organizationUuid differs
+# from the last recorded one. Each checkpoint owns the time-range from
+# its 'from' value to the next checkpoint's 'from' (or now).
+$checkpoints = @()
+if (Test-Path $accountsPath) {
+    try {
+        $loaded = Get-Content -Raw $accountsPath | ConvertFrom-Json
+        if ($loaded.checkpoints) { $checkpoints = @($loaded.checkpoints) }
+    } catch {}
+}
+if ($currentAccount) {
+    $last = $null
+    if ($checkpoints.Count -gt 0) { $last = $checkpoints[-1] }
+    if (-not $last -or [string]$last.org -ne $currentAccount.org) {
+        $checkpoints += @{
+            from  = $nowUtc.ToString('o')
+            org   = $currentAccount.org
+            email = $currentAccount.email
+            name  = $currentAccount.name
+        }
+        try {
+            @{ checkpoints = $checkpoints } |
+                ConvertTo-Json -Depth 4 |
+                Set-Content -Path $accountsPath -Encoding utf8
+        } catch {}
+    }
+}
+
+# Map a UTC timestamp to the account that owned it at that moment.
+# Pre-first-checkpoint history is attributed to the earliest checkpoint —
+# i.e., "if you install this script while signed into account A, all your
+# past usage shows as A; future switches are tracked correctly from
+# install onward."
+function Account-At([DateTime]$t) {
+    if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
+    $acct = $script:checkpoints[0]
+    foreach ($cp in $script:checkpoints) {
+        try { $cpTime = [DateTime]::Parse($cp.from).ToUniversalTime() } catch { continue }
+        if ($t -ge $cpTime) { $acct = $cp } else { break }
+    }
+    return $acct
+}
 
 # Field-level regex extraction — ConvertFrom-Json per line is too slow on 19MB+.
 $rxTs       = [regex]'"timestamp":"([^"]+)"'
@@ -72,28 +180,38 @@ $rxCache1h  = [regex]'"ephemeral_1h_input_tokens":(\d+)'
 # on every turn. Reuse the cached numbers if computed within the last 20s.
 $cacheTtlSec = 20
 $useCache = $false
+$currentOrgKey = ''
+if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 if (Test-Path $cachePath) {
     try {
         $cache = Get-Content -Raw $cachePath | ConvertFrom-Json
         $age = ($nowUtc - [DateTime]::Parse($cache.computedAtUtc).ToUniversalTime()).TotalSeconds
-        if ($age -ge 0 -and $age -lt $cacheTtlSec) {
-            $tok5h    = [long]$cache.tok5h
-            $tok7d    = [long]$cache.tok7d
-            $cost5h   = [double]$cache.cost5h
-            $cost7d   = [double]$cache.cost7d
-            $useCache = $true
+        # Invalidate if the active account changed since last scan — otherwise
+        # the cached per-account numbers belong to the wrong org.
+        $cachedOrg = ''
+        if ($cache.PSObject.Properties.Match('orgKey').Count -gt 0) { $cachedOrg = [string]$cache.orgKey }
+        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey) {
+            $tok5h       = [long]$cache.tok5h
+            $tok7d       = [long]$cache.tok7d
+            $cost5h      = [double]$cache.cost5h
+            $cost7d      = [double]$cache.cost7d
+            $tokSession  = [long]$cache.tokSession
+            $costSession = [double]$cache.costSession
+            $useCache    = $true
         }
     } catch {}
 }
 
 if (-not $useCache -and (Test-Path $projectsDir)) {
     $seen = @{}
+    # All scanned turns, regardless of account, used after the scan to
+    # detect the session boundary by walking backward through time.
+    $turns = New-Object System.Collections.ArrayList
     $files = Get-ChildItem -Path $projectsDir -Filter *.jsonl -Recurse `
         -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
 
     foreach ($f in $files) {
-        $reader = $null
         try {
             $reader = [System.IO.File]::OpenText($f.FullName)
             while (-not $reader.EndOfStream) {
@@ -112,14 +230,12 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                 # Dedupe by message id — the same assistant turn is logged
                 # once per content block (thinking, tool_use, ...) and each
                 # log carries the same usage. Counting them all triples the
-                # number. Check the key now but only commit it after the
-                # line is proven to have real usage data, so a malformed or
-                # zero-usage line can't poison the dedupe set.
-                $key = $null
+                # number.
                 $mId = $rxMsgId.Match($line)
                 if ($mId.Success) {
                     $key = $mId.Groups[1].Value
                     if ($seen.ContainsKey($key)) { continue }
+                    $seen[$key] = $true
                 }
 
                 $tIn = 0L; $tOut = 0L; $tCacheC = 0L; $tCacheR = 0L; $t5m = 0L; $t1h = 0L
@@ -132,16 +248,14 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
 
                 $sum = $tIn + $tOut + $tCacheC + $tCacheR
                 if ($sum -le 0) { continue }
-                if ($key) { $seen[$key] = $true }
 
                 # Per-turn cost using this turn's model
                 $modelId = ''
                 $mm = $rxModel.Match($line); if ($mm.Success) { $modelId = $mm.Groups[1].Value }
                 $p = $prices[(Get-ModelFamily $modelId)]
                 # If the 5m/1h breakdown isn't present (older transcripts),
-                # charge all cache creation at the 5m rate — that's the default
-                # TTL for unflagged cache_control blocks, and the cheaper of
-                # the two ephemeral tiers.
+                # fall back to charging all cache creation at the 5m rate
+                # (the API default and the cheaper of the two).
                 if (($t5m + $t1h) -le 0) { $t5m = $tCacheC; $t1h = 0L }
                 $cost = (
                     $tIn     * $p.input     +
@@ -151,12 +265,28 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                     $t1h     * $p.cacheW1h
                 ) / 1000000.0
 
-                $tok7d  += $sum
-                $cost7d += $cost
-                if ($t -gt $cut5h) {
-                    $tok5h  += $sum
-                    $cost5h += $cost
+                # Attribute the turn to the account that was active at
+                # its timestamp. If no checkpoints exist yet (first run, no
+                # ~/.claude.json), $turnAcct is $null and we fall back to
+                # treating every turn as "current" — preserves the old
+                # single-account behavior.
+                $turnAcct = Account-At $t
+                $isCurrent = $true
+                if ($currentAccount) {
+                    $isCurrent = ($turnAcct -and [string]$turnAcct.org -eq $currentAccount.org)
                 }
+
+                if ($isCurrent) {
+                    $tok7d  += $sum
+                    $cost7d += $cost
+                    if ($t -gt $cut5h) {
+                        $tok5h  += $sum
+                        $cost5h += $cost
+                    }
+                }
+                # Capture every turn (any account) for session detection
+                # below — session is account-independent.
+                [void]$turns.Add(@{ ticks = $t.Ticks; sum = $sum; cost = $cost })
             }
             $reader.Close()
         } catch {
@@ -164,20 +294,40 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         }
     }
 
-    # Write atomically — two concurrent statusline invocations would otherwise
-    # race on Set-Content's truncate-then-write, and the slower one could
-    # overwrite fresher numbers with stale ones. tmp + Move-Item -Force is
-    # atomic on NTFS.
+    # --- session boundary ----------------------------------------------------
+    # A session is the current burst of contiguous activity, defined as
+    # "the chain of turns ending at the most recent one, where no gap
+    # between consecutive turns exceeds $sessionGapMinutes — AND the
+    # most recent turn itself is within $sessionGapMinutes of now."
+    #
+    # If the latest turn is older than that, no session is "active" right
+    # now and we report 0. The next new turn seeds a fresh session.
+    if ($turns.Count -gt 0) {
+        $gapTicks = [long]$sessionGapMinutes * [TimeSpan]::TicksPerMinute
+        $sorted = @($turns | Sort-Object -Property { $_.ticks } -Descending)
+        $latestTicks = $sorted[0].ticks
+        if (($nowUtc.Ticks - $latestTicks) -le $gapTicks) {
+            $prev = $latestTicks
+            foreach ($e in $sorted) {
+                if (($prev - $e.ticks) -gt $gapTicks) { break }
+                $tokSession  += [long]$e.sum
+                $costSession += [double]$e.cost
+                $prev = $e.ticks
+            }
+        }
+    }
+
     try {
-        $tmpCache = "$cachePath.tmp"
         @{
             computedAtUtc = $nowUtc.ToString('o')
+            orgKey        = $currentOrgKey
             tok5h         = $tok5h
             tok7d         = $tok7d
             cost5h        = $cost5h
             cost7d        = $cost7d
-        } | ConvertTo-Json -Compress | Set-Content -Path $tmpCache -Encoding utf8
-        Move-Item -Path $tmpCache -Destination $cachePath -Force
+            tokSession    = $tokSession
+            costSession   = $costSession
+        } | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
     } catch {}
 }
 
@@ -216,17 +366,8 @@ if ($hook -and $hook.workspace -and $hook.workspace.current_dir) {
 $gitBranch = ''
 $cwd = $null
 if ($hook) { $cwd = $hook.workspace.current_dir; if (-not $cwd) { $cwd = $hook.cwd } }
-# Reject paths whose first char is '-' — git would parse them as a flag for -C
-# (argument injection). Modern git mitigates running in untrusted directories
-# via safe.directory (CVE-2022-24765), but this guard is essentially free.
-if ($cwd -and ($cwd[0] -ne '-') -and (Test-Path -LiteralPath $cwd)) {
-    try {
-        $gitBranch = (& git -C $cwd rev-parse --abbrev-ref HEAD 2>$null)
-        # Detached HEAD returns the literal string "HEAD"; show short SHA instead.
-        if ($gitBranch -eq 'HEAD') {
-            $gitBranch = (& git -C $cwd rev-parse --short HEAD 2>$null)
-        }
-    } catch {}
+if ($cwd -and (Test-Path $cwd)) {
+    try { $gitBranch = (& git -C $cwd rev-parse --abbrev-ref HEAD 2>$null) } catch {}
 }
 
 $model = ''
@@ -239,9 +380,10 @@ $fgDim = "$esc[38;5;245m"
 $fgDir = "$esc[38;5;215m"
 $fgGit = "$esc[38;5;180m"
 $fgMod = "$esc[38;5;141m"
-$fg5h  = "$esc[38;5;81m"
-$fg7d  = "$esc[38;5;108m"
-$fgCtx = "$esc[38;5;110m"
+$fg5h      = "$esc[38;5;81m"
+$fg7d      = "$esc[38;5;108m"
+$fgSession = "$esc[38;5;178m"   # current work-burst, every account (gold)
+$fgCtx     = "$esc[38;5;110m"
 
 function Color($fg, $text) { "$fg$text$reset" }
 
@@ -252,9 +394,10 @@ if ($model)     { $parts += (Color $fgMod $model) }
 
 if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = '—' }
 if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = '—' }
-$parts += (Color $fg5h ("5h {0} ({1} tok, {2})" -f $p5, (Fmt-Tokens $tok5h), (Fmt-Cost $cost5h)))
-$parts += (Color $fg7d ("7d {0} ({1} tok, {2})" -f $p7, (Fmt-Tokens $tok7d), (Fmt-Cost $cost7d)))
-$parts += (Color $fgCtx ("ctx {0}" -f (Fmt-Tokens $ctxTokens)))
+$parts += (Color $fg5h      ("5h {0} ({1} tok, {2})" -f $p5, (Fmt-Tokens $tok5h),      (Fmt-Cost $cost5h)))
+$parts += (Color $fg7d      ("7d {0} ({1} tok, {2})" -f $p7, (Fmt-Tokens $tok7d),      (Fmt-Cost $cost7d)))
+$parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
+$parts += (Color $fgCtx     ("ctx {0}"               -f       (Fmt-Tokens $ctxTokens)))
 
 $sep = " $fgDim|$reset "
 [Console]::Out.Write([string]::Join($sep, $parts))

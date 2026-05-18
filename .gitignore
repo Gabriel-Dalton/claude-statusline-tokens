@@ -1,7 +1,13 @@
-# Claude Code local settings (per-machine permission overrides)
-.claude/settings.local.json
+# Local files produced by the script — never commit. They live in
+# ~/.claude/ in real use; this is a safety net in case anyone runs the
+# script with cwd set to the repo.
+statusline-tokens.cache.json
+statusline-accounts.json
 
-# OS junk
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
 Thumbs.db
-desktop.ini
