@@ -3,620 +3,1078 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claude-statusline-tokens — see your real Claude Code usage</title>
-<meta name="description" content="A Claude Code status line for Windows that surfaces percentage, raw token count, and pay-per-token cost for your 5h and 7d rate-limit windows.">
-<meta property="og:title" content="claude-statusline-tokens">
+<title>statusline-tokens — a live readout of your Claude Code burn rate</title>
+<meta name="description" content="A Claude Code status line for Windows that shows percentage, raw token count, and pay-per-token cost for the rolling 5-hour and 7-day rate-limit windows.">
+<meta property="og:title" content="statusline-tokens · a live readout of your Claude Code burn rate">
 <meta property="og:description" content="Real token totals and dollar cost in your Claude Code status line — not just rate-limit percentages.">
 <meta property="og:image" content="./img/statusline.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="preconnect" href="https://rsms.me/">
-<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="%230a0c0f"/><text x="16" y="22" font-family="monospace" font-size="20" fill="%23ffb454" text-anchor="middle">›</text></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400;1,500&display=swap" rel="stylesheet">
 <style>
+/* ─────────────────────────────────────────────────── TOKENS */
 :root {
-  --bg: #0d1117;
-  --bg-elev: #161b22;
-  --bg-soft: #1c2128;
-  --border: #30363d;
-  --fg: #e6edf3;
-  --fg-dim: #8b949e;
-  --fg-muted: #6e7681;
-  /* Status-line ANSI palette — same indices the script uses */
-  --c-dir:   #ffaf5f; /* 215 — orange */
-  --c-git:   #d7af87; /* 180 — tan */
-  --c-model: #af87ff; /* 141 — purple */
-  --c-5h:    #5fd7ff; /* 81  — cyan */
-  --c-7d:    #87af87; /* 108 — sage */
-  --c-ctx:   #87afd7; /* 110 — sky */
-  --c-sep:   #8a8a8a; /* 245 — gray */
+  --bg:        #0a0c0f;
+  --bg-elev:   #11141a;
+  --bg-soft:   #181c23;
+  --bg-line:   #0e1116;
+  --border:    #232932;
+  --border-2:  #2c333d;
+  --rule:      #3a4252;
 
-  --mono: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "SF Mono",
-          ui-monospace, Consolas, "DejaVu Sans Mono", monospace;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fg:        #e0e6ee;
+  --fg-dim:    #93a0b1;
+  --fg-muted:  #5e6878;
+  --fg-faint:  #3a4252;
+
+  /* phosphor palette — keyed to the script's ANSI indices */
+  --amber:     #ffb454;   /*  primary accent — CRT phosphor    */
+  --orange:    #ffaf5f;   /*  ANSI 215 · working dir          */
+  --tan:       #d7af87;   /*  ANSI 180 · git branch            */
+  --purple:    #af87ff;   /*  ANSI 141 · model                 */
+  --cyan:      #65dff5;   /*  ANSI 81  · 5h window             */
+  --sage:      #87d77f;   /*  ANSI 108 · 7d window             */
+  --sky:       #87afd7;   /*  ANSI 110 · context               */
+
+  --serif: "IBM Plex Serif", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --mono:  "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
-* { box-sizing: border-box; }
+/* ─────────────────────────────────────────────────── RESET */
+*, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--sans);
-  font-feature-settings: "cv11", "ss03";
-  line-height: 1.55;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "calt", "ss01";
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
-::selection { background: rgba(95, 215, 255, 0.25); }
 
-a { color: var(--c-5h); text-decoration: none; }
-a:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* scanline / phosphor texture — extremely subtle */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+  z-index: 9999;
+  mix-blend-mode: overlay;
+}
 
-code, pre, .mono { font-family: var(--mono); font-size: 0.92em; }
-code { background: var(--bg-soft); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
-pre  { margin: 0; }
+::selection { background: var(--amber); color: var(--bg); }
 
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+a { color: var(--amber); text-decoration: none; border-bottom: 1px solid transparent; }
+a:hover { border-bottom-color: var(--amber); }
 
-/* ────────────────────────────────────────────────────────── NAV */
-.nav {
-  position: sticky; top: 0; z-index: 10;
-  backdrop-filter: blur(10px);
-  background: rgba(13, 17, 23, 0.78);
+img { display: block; max-width: 100%; }
+
+h1, h2, h3, h4 { font-family: var(--serif); font-weight: 600; line-height: 1.05; letter-spacing: -0.01em; }
+h1 em, h2 em, h3 em { font-style: italic; font-weight: 400; color: var(--amber); }
+
+code, pre, kbd, samp { font-family: var(--mono); font-size: 0.94em; }
+code { color: var(--cyan); background: rgba(101, 223, 245, 0.06); padding: 1px 5px; border: 1px solid rgba(101,223,245,0.12); }
+pre { margin: 0; }
+
+.shell { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+@media (max-width: 600px) { .shell { padding: 0 20px; } }
+
+/* ─────────────────────────────────────────────────── TICKER */
+.ticker {
+  background: var(--bg-line);
   border-bottom: 1px solid var(--border);
-}
-.nav-inner {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 0;
-}
-.brand {
-  display: flex; align-items: center; gap: 10px;
-  font-family: var(--mono); font-weight: 600;
-  color: var(--fg);
-}
-.brand .prompt { color: var(--c-5h); }
-.brand .name { letter-spacing: -0.01em; }
-.nav-links { display: flex; gap: 20px; align-items: center; font-size: 14px; }
-.nav-links a { color: var(--fg-dim); }
-.nav-links a:hover { color: var(--fg); text-decoration: none; }
-.gh-star {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 6px 12px;
-  border: 1px solid var(--border); border-radius: 6px;
-  color: var(--fg) !important; background: var(--bg-elev);
-  font-size: 13px; font-family: var(--mono);
-}
-.gh-star:hover { background: var(--bg-soft); text-decoration: none !important; }
-
-/* ────────────────────────────────────────────────────────── HERO */
-.hero { padding: 80px 0 60px; }
-.eyebrow {
-  display: inline-block;
-  font-family: var(--mono); font-size: 12px;
-  color: var(--fg-muted);
-  margin-bottom: 24px;
-  letter-spacing: 0.04em;
-}
-h1 {
-  font-size: clamp(36px, 5.5vw, 60px);
-  line-height: 1.05;
-  margin: 0 0 20px;
-  letter-spacing: -0.025em;
-  font-weight: 700;
-}
-h1 .accent { color: var(--c-5h); }
-h1 .accent-2 { color: var(--c-7d); }
-.lede {
-  font-size: clamp(17px, 1.6vw, 20px);
-  color: var(--fg-dim);
-  max-width: 640px;
-  margin: 0 0 32px;
-}
-.cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 56px; }
-.btn {
-  display: inline-flex; align-items: center; gap: 10px;
-  padding: 12px 18px;
-  border-radius: 8px;
-  font-family: var(--mono); font-size: 14px; font-weight: 500;
-  border: 1px solid transparent;
-  transition: transform .08s ease, background .2s ease;
-}
-.btn:hover { text-decoration: none !important; transform: translateY(-1px); }
-.btn-primary { background: var(--c-5h); color: #0d1117 !important; }
-.btn-primary:hover { background: #7fdfff; }
-.btn-ghost { background: var(--bg-elev); color: var(--fg) !important; border-color: var(--border); }
-.btn-ghost:hover { background: var(--bg-soft); }
-
-/* Terminal frame for the hero screenshot */
-.term {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-elev);
   overflow: hidden;
-  box-shadow:
-    0 30px 80px -20px rgba(0,0,0,0.6),
-    0 0 0 1px rgba(255,255,255,0.02);
-}
-.term-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px;
-  background: linear-gradient(180deg, #1c2128, #161b22);
-  border-bottom: 1px solid var(--border);
-}
-.term-bar .dot {
-  width: 12px; height: 12px; border-radius: 50%;
-  background: #484f58;
-}
-.term-bar .dot.r { background: #ff5f56; }
-.term-bar .dot.y { background: #ffbd2e; }
-.term-bar .dot.g { background: #27c93f; }
-.term-bar .title {
-  flex: 1; text-align: center;
-  font-family: var(--mono); font-size: 12px;
-  color: var(--fg-muted);
-}
-.term img { display: block; width: 100%; height: auto; background: var(--bg); }
-
-/* ────────────────────────────────────────────────────────── ASCII DIVIDERS */
-.divider {
   font-family: var(--mono);
-  color: var(--fg-muted);
-  text-align: center;
-  letter-spacing: 0.2em;
-  padding: 48px 0 24px;
   font-size: 12px;
-  user-select: none;
-}
-
-/* ────────────────────────────────────────────────────────── SECTIONS */
-section { padding: 24px 0; }
-.section-label {
-  font-family: var(--mono); font-size: 12px; letter-spacing: 0.15em;
-  color: var(--c-7d); text-transform: uppercase;
-  margin-bottom: 12px;
-}
-h2 {
-  font-size: clamp(26px, 3vw, 36px);
-  line-height: 1.15; letter-spacing: -0.02em; font-weight: 700;
-  margin: 0 0 14px;
-}
-h2 + .lede { margin-bottom: 40px; max-width: 720px; font-size: 17px; }
-
-/* ────────────────────────────────────────────────────────── COMPARISON */
-.compare {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--bg-elev);
-}
-.compare-row {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
-  align-items: stretch;
-}
-.compare-row + .compare-row { border-top: 1px solid var(--border); }
-.compare-cell {
-  padding: 14px 18px;
-  font-size: 14px;
-  display: flex; align-items: center; gap: 8px;
-}
-.compare-cell + .compare-cell { border-left: 1px solid var(--border); }
-.compare-head .compare-cell {
-  background: var(--bg-soft);
-  font-family: var(--mono);
-  color: var(--fg-dim);
-  font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
-}
-.compare-row .feature { font-weight: 500; color: var(--fg); }
-.tick   { color: var(--c-7d); }
-.cross  { color: var(--fg-muted); }
-.partial{ color: var(--c-dir); }
-.compare-cell.mine { background: rgba(95, 215, 255, 0.04); }
-.compare-cell.mine.head { color: var(--c-5h); }
-
-@media (max-width: 720px) {
-  .compare-row { grid-template-columns: 1fr 1fr; }
-  .compare-cell { border-left: none !important; border-top: 1px solid var(--border); }
-  .compare-row .compare-cell:first-child { grid-column: 1 / -1; border-top: none; background: var(--bg-soft); }
-}
-
-/* ────────────────────────────────────────────────────────── DISSECT */
-.dissect {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--bg-elev);
-}
-.dissect img { display: block; width: 100%; height: auto; background: #0d1117; }
-.legend {
-  padding: 24px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
-  border-top: 1px solid var(--border);
-}
-.chip {
-  display: flex; gap: 12px; align-items: flex-start;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
-}
-.chip .swatch {
-  width: 10px; height: 10px; border-radius: 50%;
-  margin-top: 6px;
-  box-shadow: 0 0 12px currentColor;
-  flex: none;
-}
-.chip .label { font-family: var(--mono); font-size: 13px; color: var(--fg); margin-bottom: 2px; }
-.chip .desc  { font-size: 13px; color: var(--fg-dim); }
-.s-dir   .swatch, .s-dir   .label { color: var(--c-dir); }
-.s-git   .swatch, .s-git   .label { color: var(--c-git); }
-.s-model .swatch, .s-model .label { color: var(--c-model); }
-.s-5h    .swatch, .s-5h    .label { color: var(--c-5h); }
-.s-7d    .swatch, .s-7d    .label { color: var(--c-7d); }
-.s-ctx   .swatch, .s-ctx   .label { color: var(--c-ctx); }
-
-/* ────────────────────────────────────────────────────────── FEATURES */
-.features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-@media (max-width: 880px) { .features { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
-.feature-card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 22px;
-  transition: border-color .2s ease, transform .15s ease;
-}
-.feature-card:hover { border-color: var(--c-5h); transform: translateY(-2px); }
-.feature-card h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -0.01em; }
-.feature-card p  { margin: 0; font-size: 14px; color: var(--fg-dim); line-height: 1.55; }
-
-/* ────────────────────────────────────────────────────────── INSTALL */
-.install-steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  counter-reset: step;
-}
-@media (max-width: 880px) { .install-steps { grid-template-columns: 1fr; } }
-.step {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 22px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   position: relative;
 }
-.step::before {
-  counter-increment: step;
-  content: "0" counter(step);
-  position: absolute;
-  top: 14px; right: 18px;
-  font-family: var(--mono); font-size: 11px;
-  color: var(--c-5h); opacity: 0.7;
-  letter-spacing: 0.1em;
+.ticker-rail {
+  display: inline-flex;
+  padding: 9px 0;
+  animation: ticker 60s linear infinite;
+  gap: 0;
 }
-.step h3 { margin: 0 0 10px; font-size: 16px; }
-.step p  { margin: 0 0 14px; font-size: 14px; color: var(--fg-dim); }
-.step pre {
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px;
-  overflow: auto; font-size: 12px;
-  color: var(--fg);
-}
-.step pre .k { color: var(--c-model); }
-.step pre .s { color: var(--c-7d); }
-.step pre .c { color: var(--fg-muted); font-style: italic; }
-
-/* ────────────────────────────────────────────────────────── EXPLAIN */
-.explain {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 28px;
-}
-.explain ol { padding-left: 22px; margin: 0; color: var(--fg-dim); }
-.explain li { margin-bottom: 10px; line-height: 1.6; }
-.explain li strong { color: var(--fg); font-weight: 500; }
-.explain code { color: var(--c-5h); }
-
-/* ────────────────────────────────────────────────────────── FOOTER */
-.footer {
-  margin-top: 80px;
-  padding: 40px 0 56px;
-  border-top: 1px solid var(--border);
+.ticker-rail:hover { animation-play-state: paused; }
+.ticker-item {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 0 28px;
   color: var(--fg-dim);
+}
+.ticker-item .label { color: var(--fg-muted); font-size: 10.5px; letter-spacing: 0.12em; }
+.ticker-item .val   { color: var(--fg); font-weight: 500; }
+.ticker-item .up    { color: var(--sage); }
+.ticker-item .down  { color: var(--orange); }
+.ticker-item.amber  .val { color: var(--amber); }
+.ticker-item.cyan   .val { color: var(--cyan); }
+.ticker-item.sage   .val { color: var(--sage); }
+.ticker-item.sky    .val { color: var(--sky); }
+.ticker-sep { color: var(--fg-faint); padding: 0 6px; }
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* ─────────────────────────────────────────────────── NAV */
+.nav {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: blur(6px);
+  background: rgba(10, 12, 15, 0.88);
+}
+.nav-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 16px 0;
+  gap: 24px;
+}
+.brand {
+  display: inline-flex; align-items: baseline; gap: 12px;
+  font-family: var(--mono); font-size: 14px;
+  color: var(--fg); border-bottom: none;
+}
+.brand .caret { color: var(--amber); font-weight: 600; }
+.brand .name { letter-spacing: 0.01em; }
+.brand .ver  { color: var(--fg-muted); font-size: 11px; letter-spacing: 0.06em; padding-left: 6px; border-left: 1px solid var(--border); margin-left: 4px; }
+.brand .cursor {
+  display: inline-block; width: 8px; height: 14px;
+  background: var(--amber); margin-left: 4px;
+  vertical-align: -2px;
+  animation: blink 1.1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.nav-links {
+  display: inline-flex; gap: 6px; align-items: center;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em;
+}
+.nav-links a {
+  color: var(--fg-dim); padding: 6px 10px; border-bottom: none;
+  text-transform: uppercase;
+}
+.nav-links a:hover { color: var(--fg); background: var(--bg-soft); }
+.nav-links .gh {
+  color: var(--bg) !important;
+  background: var(--amber);
+  padding: 7px 14px;
+  margin-left: 8px;
+  font-weight: 600;
+}
+.nav-links .gh:hover { background: #ffc785; }
+
+@media (max-width: 720px) {
+  .nav-row { grid-template-columns: 1fr; gap: 8px; }
+  .nav-links { flex-wrap: wrap; }
+  .nav-links a:not(.gh) { display: none; }
+}
+
+/* ─────────────────────────────────────────────────── HERO */
+.hero { padding: 64px 0 80px; position: relative; }
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+}
+@media (max-width: 920px) { .hero-grid { grid-template-columns: 1fr; gap: 48px; } }
+
+.eyebrow {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--fg-muted);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin: 0 0 28px;
+  display: flex; align-items: center; gap: 12px;
+}
+.eyebrow::before { content: "//"; color: var(--amber); }
+.eyebrow .rule {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+
+h1.headline {
+  font-size: clamp(48px, 8vw, 96px);
+  letter-spacing: -0.035em;
+  line-height: 0.96;
+  margin: 0 0 32px;
+  font-weight: 600;
+}
+h1.headline .line { display: block; }
+h1.headline em {
+  font-style: italic; font-weight: 400;
+  color: var(--amber);
+  letter-spacing: -0.02em;
+}
+h1.headline .ampersand { color: var(--fg-muted); font-style: italic; font-weight: 400; }
+h1.headline .underline { position: relative; }
+h1.headline .underline::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0.05em;
+  height: 4px; background: var(--amber);
+  transform: skewX(-12deg);
+}
+
+.lede {
+  font-family: var(--serif);
+  font-size: clamp(17px, 1.8vw, 21px);
+  color: var(--fg-dim);
+  max-width: 520px;
+  line-height: 1.5;
+  margin: 0 0 36px;
+}
+.lede em { color: var(--fg); font-style: italic; }
+.lede .acc { color: var(--amber); font-style: italic; }
+
+/* CTA row */
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn {
+  font-family: var(--mono); font-size: 13px;
+  padding: 14px 20px;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--fg);
+  display: inline-flex; align-items: center; gap: 10px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  border-radius: 0;
+}
+.btn:hover { border-bottom-color: var(--border-2); }
+.btn.primary {
+  background: var(--amber); color: var(--bg);
+  border-color: var(--amber); font-weight: 600;
+}
+.btn.primary:hover { background: #ffc785; border-color: #ffc785; }
+.btn.ghost:hover { background: var(--bg-soft); color: var(--amber); border-color: var(--amber); }
+.btn .prompt { color: currentColor; opacity: 0.55; }
+
+/* right column — quote panel */
+.quote-panel {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  position: relative;
+}
+.quote-panel::before, .quote-panel::after {
+  content: ""; position: absolute; width: 12px; height: 12px;
+  border: 1px solid var(--amber);
+}
+.quote-panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.quote-panel::after  { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+.qp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-line);
+  font-size: 11px; letter-spacing: 0.16em;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+}
+.qp-head .live {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--amber);
+}
+.qp-head .live::before {
+  content: ""; width: 6px; height: 6px; background: var(--amber);
+  border-radius: 50%; box-shadow: 0 0 8px var(--amber);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.25; }
+}
+
+.readout {
+  margin: 0; padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.readout > div {
+  padding: 22px 20px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.readout > div:nth-child(2) { border-right: 0; }
+.readout > div:nth-child(3) { border-bottom: 0; }
+.readout > div:nth-child(4) { border-bottom: 0; border-right: 0; }
+
+.readout dt {
+  font-family: var(--mono);
+  font-size: 10.5px; letter-spacing: 0.18em;
+  color: var(--fg-muted); text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.readout .num {
+  font-family: var(--serif); font-weight: 600;
+  font-size: 38px; line-height: 1; letter-spacing: -0.02em;
+  display: flex; align-items: baseline; gap: 2px;
+  font-feature-settings: "tnum";
+}
+.readout .num small {
+  font-size: 16px; font-weight: 400;
+  color: var(--fg-dim); margin-left: 2px;
+}
+.readout .num.amber { color: var(--amber); }
+.readout .num.cyan  { color: var(--cyan); }
+.readout .num.sage  { color: var(--sage); }
+.readout .num.sky   { color: var(--sky); }
+.readout .sub {
+  font-size: 12px; color: var(--fg-dim);
+  margin-top: 8px;
+  letter-spacing: 0.01em;
+}
+.readout .sub .delim { color: var(--fg-faint); padding: 0 4px; }
+
+.qp-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-line);
+  font-size: 11px;
+  color: var(--fg-muted);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.qp-foot .arrow { color: var(--amber); }
+
+/* hero screenshot under the panel */
+.hero-shot {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg-line);
+}
+.hero-shot figcaption {
+  padding: 8px 14px;
+  font-size: 10.5px; letter-spacing: 0.18em;
+  color: var(--fg-muted); text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between;
+}
+.hero-shot img { width: 100%; height: auto; }
+
+/* hero load animation */
+.hero .reveal { opacity: 0; transform: translateY(8px); animation: rise 0.8s cubic-bezier(.2,.7,.2,1) forwards; }
+.hero .reveal.d1 { animation-delay: 0.05s; }
+.hero .reveal.d2 { animation-delay: 0.18s; }
+.hero .reveal.d3 { animation-delay: 0.30s; }
+.hero .reveal.d4 { animation-delay: 0.42s; }
+.hero .reveal.d5 { animation-delay: 0.55s; }
+.hero .reveal.d6 { animation-delay: 0.70s; }
+@keyframes rise {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─────────────────────────────────────────────────── SECTION HEADERS */
+.section { padding: 80px 0; border-top: 1px solid var(--border); }
+.section-head {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 32px;
+  margin-bottom: 48px;
+  align-items: baseline;
+}
+@media (max-width: 720px) { .section-head { grid-template-columns: 1fr; gap: 8px; } }
+.section-num {
+  font-family: var(--mono); font-size: 11px;
+  letter-spacing: 0.18em; color: var(--amber);
+  padding-top: 6px;
+}
+.section-title {
+  font-family: var(--serif);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.section-title em { color: var(--amber); font-style: italic; font-weight: 400; }
+.section-kicker {
+  font-family: var(--serif); font-size: 18px;
+  color: var(--fg-dim);
+  max-width: 640px;
+  margin-top: 14px;
+  line-height: 1.5;
+}
+
+/* ─────────────────────────────────────────────────── COMPARE TABLE */
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
   font-size: 13px;
+}
+.compare-table thead th {
+  text-align: left;
+  padding: 14px 16px;
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-line);
+}
+.compare-table thead th.mine { color: var(--amber); }
+.compare-table td {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.compare-table td.feat { color: var(--fg); width: 38%; }
+.compare-table td.mine { background: rgba(255, 180, 84, 0.04); border-left: 1px solid rgba(255,180,84,0.18); border-right: 1px solid rgba(255,180,84,0.18); }
+.compare-table tr:last-child td { border-bottom: 0; }
+.compare-table tr:last-child td.mine { border-bottom: 1px solid rgba(255,180,84,0.18); }
+.tick   { color: var(--sage); font-weight: 500; }
+.cross  { color: var(--fg-faint); }
+.partial{ color: var(--orange); }
+.note   { color: var(--fg-muted); font-size: 11px; padding-left: 6px; }
+@media (max-width: 720px) {
+  .compare-table, .compare-table thead, .compare-table tbody, .compare-table tr, .compare-table td, .compare-table th { display: block; }
+  .compare-table thead { display: none; }
+  .compare-table tr {
+    border: 1px solid var(--border); margin-bottom: 12px;
+  }
+  .compare-table td {
+    display: grid; grid-template-columns: 1fr auto; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+  }
+  .compare-table td.feat { background: var(--bg-line); font-weight: 500; grid-template-columns: 1fr; }
+  .compare-table td.mine { border-left: 3px solid var(--amber); border-right: 0; }
+  .compare-table td::before { content: attr(data-col); color: var(--fg-muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .compare-table td.feat::before { display: none; }
+}
+
+/* ─────────────────────────────────────────────────── ANATOMY */
+.anatomy-shot {
+  border: 1px solid var(--border);
+  background: var(--bg-line);
+  margin-bottom: 32px;
+  position: relative;
+}
+.anatomy-shot::before, .anatomy-shot::after {
+  content: ""; position: absolute; width: 16px; height: 16px;
+  border: 1px solid var(--amber);
+}
+.anatomy-shot::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.anatomy-shot::after  { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+.anatomy-shot img { width: 100%; height: auto; }
+
+.data-dict {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono); font-size: 13px;
+}
+.data-dict thead th {
+  text-align: left;
+  padding: 12px 16px;
+  font-weight: 500;
+  font-size: 10.5px; letter-spacing: 0.18em;
+  color: var(--fg-muted); text-transform: uppercase;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--bg-line);
+}
+.data-dict td {
+  padding: 16px;
+  border-bottom: 1px dashed var(--border);
+  vertical-align: top;
+}
+.data-dict tr:last-child td { border-bottom: 1px solid var(--border-2); }
+.data-dict .seg { font-weight: 500; }
+.data-dict .seg.dir   { color: var(--orange); }
+.data-dict .seg.git   { color: var(--tan); }
+.data-dict .seg.model { color: var(--purple); }
+.data-dict .seg.fivh  { color: var(--cyan); }
+.data-dict .seg.svnd  { color: var(--sage); }
+.data-dict .seg.ctx   { color: var(--sky); }
+.data-dict .sample { color: var(--fg-dim); }
+.data-dict .source code { background: transparent; border: 0; padding: 0; color: var(--fg-dim); }
+.data-dict .swatch-cell { white-space: nowrap; color: var(--fg-muted); }
+.data-dict .swatch {
+  display: inline-block; width: 9px; height: 9px;
+  background: currentColor;
+  margin-right: 8px;
+  box-shadow: 0 0 8px currentColor;
+  vertical-align: middle;
+}
+@media (max-width: 720px) {
+  .data-dict, .data-dict thead, .data-dict tbody, .data-dict tr, .data-dict td, .data-dict th { display: block; }
+  .data-dict thead { display: none; }
+  .data-dict tr { border: 1px solid var(--border); margin-bottom: 12px; padding: 12px; }
+  .data-dict td { border: 0; padding: 4px 0; }
+  .data-dict td::before { content: attr(data-col) " · "; color: var(--fg-muted); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .data-dict .seg::before { display: none; }
+}
+
+/* ─────────────────────────────────────────────────── INSTALL */
+.procedure {
+  list-style: none; padding: 0; margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+@media (max-width: 880px) { .procedure { grid-template-columns: 1fr; } }
+.procedure li {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 28px;
+  background: var(--bg-elev);
+  position: relative;
+}
+.proc-num {
+  font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: 0.18em; color: var(--amber);
+  margin-bottom: 14px; text-transform: uppercase;
+}
+.proc-num .step { color: var(--fg-muted); }
+.procedure h3 {
+  font-family: var(--serif); font-size: 22px;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+.procedure p { color: var(--fg-dim); font-size: 14px; line-height: 1.55; margin: 0 0 16px; max-width: 36ch; }
+.procedure pre {
+  background: var(--bg-line);
+  border: 1px solid var(--border);
+  padding: 14px;
+  font-size: 12px;
+  color: var(--fg);
+  overflow: auto;
+}
+.procedure pre .c  { color: var(--fg-muted); font-style: italic; }
+.procedure pre .k  { color: var(--purple); }
+.procedure pre .s  { color: var(--sage); }
+.procedure pre .x  { color: var(--amber); }
+
+/* ─────────────────────────────────────────────────── METHODOLOGY */
+.methodology {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 56px;
+  align-items: start;
+}
+@media (max-width: 920px) { .methodology { grid-template-columns: 1fr; gap: 36px; } }
+.methodology-text {
+  font-family: var(--serif);
+  font-size: 17px; line-height: 1.7; color: var(--fg-dim);
+}
+.methodology-text p { margin: 0 0 18px; }
+.methodology-text em { color: var(--fg); font-style: italic; }
+.methodology-text code { font-family: var(--mono); }
+
+.steps-ol {
+  list-style: none; padding: 0; margin: 0;
+  border-top: 1px solid var(--border);
+}
+.steps-ol li {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.steps-ol li .idx {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--amber); letter-spacing: 0.12em;
+  padding-top: 3px;
+}
+.steps-ol li .body { font-family: var(--mono); font-size: 13.5px; color: var(--fg); line-height: 1.55; }
+.steps-ol li .body strong { color: var(--fg); font-weight: 500; }
+.steps-ol li .body .meta { color: var(--fg-dim); display: block; margin-top: 4px; font-size: 12.5px; }
+
+.footnote {
+  margin-top: 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  background: var(--bg-line);
+  font-size: 12.5px;
+  color: var(--fg-dim);
   font-family: var(--mono);
 }
-.footer-inner { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: center; }
-.footer a { color: var(--fg-dim); }
-.footer a:hover { color: var(--fg); }
+.footnote::before {
+  content: "↳ "; color: var(--amber);
+}
+
+/* ─────────────────────────────────────────────────── FOOTER */
+.foot {
+  border-top: 1px solid var(--border);
+  background: var(--bg-line);
+  padding: 36px 0 48px;
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--fg-muted); letter-spacing: 0.06em;
+}
+.foot-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px; align-items: center;
+}
+@media (max-width: 720px) { .foot-row { grid-template-columns: 1fr; } }
+.foot a { color: var(--fg-dim); border-bottom-color: transparent; }
+.foot a:hover { color: var(--amber); border-bottom-color: var(--amber); }
+.foot .sep { color: var(--fg-faint); padding: 0 8px; }
+.foot .uppr { text-transform: uppercase; }
+
+/* ─────────────────────────────────────────────────── A11Y */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .ticker-rail { transform: none; }
+}
 </style>
 </head>
 <body>
 
-<nav class="nav">
-  <div class="wrap nav-inner">
+<!-- ─────────────────────────────────────────────────── TICKER -->
+<div class="ticker" role="presentation" aria-hidden="true">
+  <div class="ticker-rail">
+    <span class="ticker-item amber"><span class="label">5H</span><span class="val">97%</span><span class="up">▲</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">TOK</span><span class="val">103.8M</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">USD</span><span class="val">$300.00</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item sage"><span class="label">7D</span><span class="val">25%</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">TOK</span><span class="val">149.7M</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">USD</span><span class="val">$456.00</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item sky"><span class="label">CTX</span><span class="val">63.0k</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item cyan"><span class="label">MOD</span><span class="val">OPUS 4.7</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">PRJ</span><span class="val">claude-statusline-tokens</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">BRANCH</span><span class="val">main</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">RENDER</span><span class="val">~0.9s</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">CACHE</span><span class="val">20s</span></span>
+    <span class="ticker-sep">●</span>
+    <!-- duplicate for seamless loop -->
+    <span class="ticker-item amber"><span class="label">5H</span><span class="val">97%</span><span class="up">▲</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">TOK</span><span class="val">103.8M</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">USD</span><span class="val">$300.00</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item sage"><span class="label">7D</span><span class="val">25%</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">TOK</span><span class="val">149.7M</span></span>
+    <span class="ticker-sep">/</span>
+    <span class="ticker-item"><span class="label">USD</span><span class="val">$456.00</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item sky"><span class="label">CTX</span><span class="val">63.0k</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item cyan"><span class="label">MOD</span><span class="val">OPUS 4.7</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">PRJ</span><span class="val">claude-statusline-tokens</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">BRANCH</span><span class="val">main</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">RENDER</span><span class="val">~0.9s</span></span>
+    <span class="ticker-sep">●</span>
+    <span class="ticker-item"><span class="label">CACHE</span><span class="val">20s</span></span>
+    <span class="ticker-sep">●</span>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────── NAV -->
+<nav class="nav" aria-label="primary">
+  <div class="shell nav-row">
     <a class="brand" href="./">
-      <span class="prompt">›</span>
-      <span class="name">claude-statusline-tokens</span>
+      <span class="caret">›</span>
+      <span class="name">statusline-tokens</span>
+      <span class="ver">v1.0 · WIN · MIT</span>
+      <span class="cursor" aria-hidden="true"></span>
     </a>
     <div class="nav-links">
-      <a href="#features">features</a>
+      <a href="#why">why</a>
+      <a href="#anatomy">anatomy</a>
       <a href="#install">install</a>
-      <a href="#how">how it works</a>
-      <a class="gh-star" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
-        ★ Star on GitHub
-      </a>
+      <a href="#methodology">methodology</a>
+      <a class="gh" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">★ GitHub</a>
     </div>
   </div>
 </nav>
 
+<!-- ─────────────────────────────────────────────────── HERO -->
 <header class="hero">
-  <div class="wrap">
-    <div class="eyebrow">
-      <span>Windows · PowerShell 5.1+ · MIT</span>
-    </div>
-    <h1>
-      See your <span class="accent">real Claude Code usage</span><br>
-      in <span class="accent-2">tokens and dollars</span>, not just percent.
-    </h1>
-    <p class="lede">
-      Anthropic's status-line hook only gives you <code>used_percentage</code>.
-      This script adds the raw token totals and pay-per-token cost
-      for your 5-hour and 7-day rate-limit windows — counted from
-      your actual transcripts, priced at API rates.
-    </p>
+  <div class="shell">
+    <div class="hero-grid">
+      <div class="hero-left">
+        <p class="eyebrow reveal d1">A Claude Code status line<span class="rule"></span></p>
 
-    <div class="cta-row">
-      <a class="btn btn-primary" href="#install">› Install in 30 seconds</a>
-      <a class="btn btn-ghost" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
-        View source ↗
-      </a>
-    </div>
+        <h1 class="headline">
+          <span class="line reveal d2">Your <em>real</em></span>
+          <span class="line reveal d3"><span class="underline">burn rate.</span></span>
+          <span class="line reveal d4" style="font-size: 0.52em; color: var(--fg-dim); letter-spacing: 0; margin-top: 16px; display: block;">Tokens <span class="ampersand">&amp;</span> dollars. Window by window.</span>
+        </h1>
 
-    <div class="term" id="hero-term">
-      <div class="term-bar">
-        <span class="dot r"></span>
-        <span class="dot y"></span>
-        <span class="dot g"></span>
-        <span class="title">pwsh ~ claude-statusline-tokens</span>
+        <p class="lede reveal d5">
+          Anthropic's hook injects rate-limit <em>percentages</em>. <br>
+          This script adds <span class="acc">the numbers underneath</span> —
+          raw tokens and pay-per-token cost for your rolling 5-hour
+          and 7-day windows, summed from your transcripts and priced at API rates.
+        </p>
+
+        <div class="cta reveal d6">
+          <a class="btn primary" href="#install"><span class="prompt">›</span>install in 30s</a>
+          <a class="btn ghost" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">view source &nbsp;↗</a>
+        </div>
       </div>
-      <img src="./img/statusline-wide.png" alt="The status line rendered inside Claude Code, showing percentages, token totals, and dollar cost for the 5h and 7d rate-limit windows.">
+
+      <aside class="hero-right">
+        <div class="quote-panel reveal d3">
+          <div class="qp-head">
+            <span>readout · current session</span>
+            <span class="live">live</span>
+          </div>
+          <dl class="readout">
+            <div>
+              <dt>5h rolling</dt>
+              <dd class="num cyan">97<small>%</small></dd>
+              <dd class="sub">103.8M tok <span class="delim">/</span> $300.00</dd>
+            </div>
+            <div>
+              <dt>7d rolling</dt>
+              <dd class="num sage">25<small>%</small></dd>
+              <dd class="sub">149.7M tok <span class="delim">/</span> $456.00</dd>
+            </div>
+            <div>
+              <dt>model</dt>
+              <dd class="num amber" style="font-size: 24px;">Opus 4.7</dd>
+              <dd class="sub">1M context window</dd>
+            </div>
+            <div>
+              <dt>context</dt>
+              <dd class="num sky">63.0<small>k</small></dd>
+              <dd class="sub">this assistant turn</dd>
+            </div>
+          </dl>
+          <div class="qp-foot">
+            <span>↧ refreshed every prompt cycle</span>
+            <span class="arrow">→</span>
+          </div>
+        </div>
+
+        <figure class="hero-shot reveal d5">
+          <figcaption>
+            <span>FIG.01 · RENDERED STATUS LINE</span>
+            <span>PWSH</span>
+          </figcaption>
+          <img src="./img/statusline-wide.png" alt="The status line rendered inside Claude Code on Windows, showing the working directory in orange, git branch in tan, model in purple, 5-hour rolling window stats in cyan, 7-day rolling window stats in sage green, and the current context in sky blue.">
+        </figure>
+      </aside>
     </div>
   </div>
 </header>
 
-<div class="divider">─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</div>
-
-<!-- ────────────────────────────────────────── DISSECT -->
-<section id="dissect">
-  <div class="wrap">
-    <div class="section-label">Anatomy</div>
-    <h2>Every segment, decoded.</h2>
-    <p class="lede">
-      Six color-coded segments, each one a different signal. Read it like a dashboard.
-    </p>
-
-    <div class="dissect">
-      <img src="./img/statusline.png" alt="Close-up of the status line bar showing six color-coded segments in order: working directory (claude-statusline-tokens, orange), git branch (main, tan), model (Opus 4.7 1M context, purple), 5-hour window (97 percent, 103.8M tokens, $300, cyan), 7-day window (25 percent, 149.7M tokens, $456, sage green), and current context (63.0k, sky blue).">
-      <div class="legend">
-        <div class="chip s-dir">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">claude-statusline-tokens</div>
-            <div class="desc">Current working directory (leaf folder).</div>
-          </div>
-        </div>
-        <div class="chip s-git">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">main</div>
-            <div class="desc">Active git branch from <code>git rev-parse</code>.</div>
-          </div>
-        </div>
-        <div class="chip s-model">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">Opus 4.7 (1M context)</div>
-            <div class="desc">Model display name, straight from the hook.</div>
-          </div>
-        </div>
-        <div class="chip s-5h">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">5h 97% (103.8M tok, $300)</div>
-            <div class="desc">Native % + real token total + cost for the rolling 5-hour window.</div>
-          </div>
-        </div>
-        <div class="chip s-7d">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">7d 25% (149.7M tok, $456)</div>
-            <div class="desc">Same trio for the rolling 7-day window.</div>
-          </div>
-        </div>
-        <div class="chip s-ctx">
-          <span class="swatch"></span>
-          <div>
-            <div class="label">ctx 63.0k</div>
-            <div class="desc">Input + cache tokens of the last assistant turn in this session.</div>
-          </div>
-        </div>
+<!-- ─────────────────────────────────────────────────── WHY -->
+<section class="section" id="why">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-num">§ 01</div>
+      <div>
+        <h2 class="section-title">The number you actually need <em>is missing.</em></h2>
+        <p class="section-kicker">
+          Claude Code injects rate-limit percentages but no raw token counts.
+          Popular status-line packages render the windows as <em>just</em>
+          percentages — useful for "am I about to throttle", silent on
+          "what is this session costing me".
+        </p>
       </div>
     </div>
+
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>feature</th>
+          <th>default statusline</th>
+          <th>claude-powerline</th>
+          <th class="mine">statusline-tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="feat">5h / 7d window %</td>
+          <td data-col="default"><span class="cross">—</span></td>
+          <td data-col="powerline"><span class="tick">●</span> yes</td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> yes</td>
+        </tr>
+        <tr>
+          <td class="feat">raw token totals (5h / 7d)</td>
+          <td data-col="default"><span class="cross">—</span></td>
+          <td data-col="powerline"><span class="cross">—</span></td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> yes</td>
+        </tr>
+        <tr>
+          <td class="feat">pay-per-token cost ($)</td>
+          <td data-col="default"><span class="cross">—</span></td>
+          <td data-col="powerline"><span class="cross">—</span></td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> yes</td>
+        </tr>
+        <tr>
+          <td class="feat">ephemeral cache pricing (5m / 1h)</td>
+          <td data-col="default"><span class="cross">—</span></td>
+          <td data-col="powerline"><span class="cross">—</span></td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> yes</td>
+        </tr>
+        <tr>
+          <td class="feat">per-turn context tokens</td>
+          <td data-col="default"><span class="cross">—</span></td>
+          <td data-col="powerline"><span class="tick">●</span> yes</td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> yes</td>
+        </tr>
+        <tr>
+          <td class="feat">runtime dependency</td>
+          <td data-col="default"><span class="tick">●</span> none</td>
+          <td data-col="powerline"><span class="partial">●</span> node</td>
+          <td class="mine" data-col="ours"><span class="tick">●</span> single .ps1</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </section>
 
-<!-- ────────────────────────────────────────── COMPARISON -->
-<section id="why">
-  <div class="wrap">
-    <div class="section-label">Why it exists</div>
-    <h2>The number you actually need is missing.</h2>
-    <p class="lede">
-      Claude Code injects rate-limit percentages but no raw token counts.
-      Popular status lines render the windows as <em>just percentages</em> — useful, but not enough
-      to know if a long session is about to spike your bill.
-    </p>
-
-    <div class="compare">
-      <div class="compare-row compare-head">
-        <div class="compare-cell">Feature</div>
-        <div class="compare-cell">Default<br>statusline</div>
-        <div class="compare-cell">claude-<br>powerline</div>
-        <div class="compare-cell mine head">claude-<br>statusline-tokens</div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">5h / 7d %</div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell"><span class="tick">✓</span></div>
-        <div class="compare-cell mine"><span class="tick">✓</span></div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">Raw token totals (5h / 7d)</div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell mine"><span class="tick">✓</span></div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">Pay-per-token cost ($)</div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell mine"><span class="tick">✓</span></div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">Cache pricing (5m / 1h ephemeral)</div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell mine"><span class="tick">✓</span></div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">Per-turn context tokens</div>
-        <div class="compare-cell"><span class="cross">—</span></div>
-        <div class="compare-cell"><span class="tick">✓</span></div>
-        <div class="compare-cell mine"><span class="tick">✓</span></div>
-      </div>
-      <div class="compare-row">
-        <div class="compare-cell feature">Dependency-free</div>
-        <div class="compare-cell"><span class="tick">✓</span></div>
-        <div class="compare-cell"><span class="partial">node</span></div>
-        <div class="compare-cell mine"><span class="tick">single .ps1</span></div>
+<!-- ─────────────────────────────────────────────────── ANATOMY -->
+<section class="section" id="anatomy">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-num">§ 02</div>
+      <div>
+        <h2 class="section-title"><em>Anatomy</em> of a bar.</h2>
+        <p class="section-kicker">
+          Six segments, each a different signal, each its own ANSI 256-color
+          index. Read it like a dashboard.
+        </p>
       </div>
     </div>
+
+    <figure class="anatomy-shot">
+      <img src="./img/statusline.png" alt="Close-up of the status line bar showing six color-coded segments in order: working directory in orange, git branch in tan, model identifier in purple, 5-hour window in cyan, 7-day window in sage green, and current context in sky blue.">
+    </figure>
+
+    <table class="data-dict">
+      <thead>
+        <tr>
+          <th style="width: 22%;">segment</th>
+          <th style="width: 30%;">sample output</th>
+          <th>derivation</th>
+          <th style="width: 90px;">ansi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td data-col="segment" class="seg dir">working dir</td>
+          <td data-col="sample" class="sample">claude-statusline-tokens</td>
+          <td data-col="source" class="source"><code>workspace.current_dir</code> &nbsp;·&nbsp; <code>Split-Path -Leaf</code></td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--orange);"><span class="swatch"></span>215</td>
+        </tr>
+        <tr>
+          <td data-col="segment" class="seg git">git branch</td>
+          <td data-col="sample" class="sample">main</td>
+          <td data-col="source" class="source"><code>git rev-parse --abbrev-ref HEAD</code></td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--tan);"><span class="swatch"></span>180</td>
+        </tr>
+        <tr>
+          <td data-col="segment" class="seg model">model</td>
+          <td data-col="sample" class="sample">Opus 4.7 (1M context)</td>
+          <td data-col="source" class="source"><code>model.display_name</code> from hook</td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--purple);"><span class="swatch"></span>141</td>
+        </tr>
+        <tr>
+          <td data-col="segment" class="seg fivh">5h window</td>
+          <td data-col="sample" class="sample">97% (103.8M tok, $300)</td>
+          <td data-col="source" class="source">native <code>rate_limits.five_hour</code> &nbsp;+&nbsp; transcript scan &nbsp;·&nbsp; API-rate cost</td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--cyan);"><span class="swatch"></span>81</td>
+        </tr>
+        <tr>
+          <td data-col="segment" class="seg svnd">7d window</td>
+          <td data-col="sample" class="sample">25% (149.7M tok, $456)</td>
+          <td data-col="source" class="source">native <code>rate_limits.seven_day</code> &nbsp;+&nbsp; transcript scan &nbsp;·&nbsp; API-rate cost</td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--sage);"><span class="swatch"></span>108</td>
+        </tr>
+        <tr>
+          <td data-col="segment" class="seg ctx">context</td>
+          <td data-col="sample" class="sample">63.0k</td>
+          <td data-col="source" class="source">last <code>usage</code> block in this session's transcript</td>
+          <td data-col="ansi" class="swatch-cell" style="color: var(--sky);"><span class="swatch"></span>110</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </section>
 
-<!-- ────────────────────────────────────────── FEATURES -->
-<section id="features">
-  <div class="wrap">
-    <div class="section-label">Built carefully</div>
-    <h2>Six design decisions that matter.</h2>
-
-    <div class="features">
-      <div class="feature-card">
-        <h3>Native percentages</h3>
-        <p>The 5h and 7d % come straight from <code>rate_limits.*.used_percentage</code> — the same numbers Claude Code uses internally for throttling.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Real token totals</h3>
-        <p>Token sums are computed from <code>~/.claude/projects/**/*.jsonl</code>, exactly the way <code>ccusage</code> does it — but without leaving your terminal.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Deduped by message id</h3>
-        <p>Assistant turns log once per content block. Naive summing triples the number. We dedupe by <code>msg_id</code> so the totals match reality.</p>
-      </div>
-      <div class="feature-card">
-        <h3>API-rate costing</h3>
-        <p>Per-turn cost using the actual model family (Opus / Sonnet / Haiku) and the right input, output, cache-read, and cache-write rates.</p>
-      </div>
-      <div class="feature-card">
-        <h3>20-second cache</h3>
-        <p>First render scans ~20MB of transcripts in under a second. Subsequent renders hit a JSON cache so the bar refreshes instantly.</p>
-      </div>
-      <div class="feature-card">
-        <h3>One file, no deps</h3>
-        <p>A single <code>statusline-tokens.ps1</code>. No npm, no install steps beyond a copy + a settings.json edit. Customize colors and segments in place.</p>
+<!-- ─────────────────────────────────────────────────── INSTALL -->
+<section class="section" id="install">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-num">§ 03</div>
+      <div>
+        <h2 class="section-title">Install in <em>30 seconds.</em></h2>
+        <p class="section-kicker">
+          Two files, one restart. Works in Windows Terminal, VS Code's integrated
+          terminal, and any 256-color ANSI host.
+        </p>
       </div>
     </div>
-  </div>
-</section>
 
-<!-- ────────────────────────────────────────── INSTALL -->
-<section id="install">
-  <div class="wrap">
-    <div class="section-label">Setup</div>
-    <h2>Install in 30 seconds.</h2>
-    <p class="lede">Two files, one restart. Works with Windows Terminal, VS Code, and any 256-color ANSI terminal.</p>
-
-    <div class="install-steps">
-      <div class="step">
-        <h3>Copy the script</h3>
-        <p>Drop <code>statusline-tokens.ps1</code> into your <code>.claude</code> folder.</p>
+    <ol class="procedure">
+      <li>
+        <div class="proc-num">PROC.001 <span class="step">/ copy</span></div>
+        <h3>Drop the script.</h3>
+        <p>Into <code>%USERPROFILE%\.claude\</code>, alongside your <code>settings.json</code>.</p>
 <pre><span class="c"># PowerShell</span>
-Copy-Item statusline-tokens.ps1 `
-  "$env:USERPROFILE\.claude\"</pre>
-      </div>
-
-      <div class="step">
-        <h3>Wire it up</h3>
-        <p>Add this <code>statusLine</code> block to <code>~/.claude/settings.json</code>:</p>
+<span class="x">Copy-Item</span> statusline-tokens.ps1 `
+  <span class="s">"$env:USERPROFILE\.claude\"</span></pre>
+      </li>
+      <li>
+        <div class="proc-num">PROC.002 <span class="step">/ wire</span></div>
+        <h3>Append to settings.json.</h3>
+        <p>Add (or replace) the <code>statusLine</code> block.</p>
 <pre>{
   <span class="k">"statusLine"</span>: {
     <span class="k">"type"</span>: <span class="s">"command"</span>,
-    <span class="k">"command"</span>: <span class="s">"powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\""</span>,
+    <span class="k">"command"</span>: <span class="s">"powershell -NoProfile</span>
+              <span class="s">  -ExecutionPolicy Bypass</span>
+              <span class="s">  -File &quot;%USERPROFILE%\\.claude</span>
+              <span class="s">  \\statusline-tokens.ps1&quot;"</span>,
     <span class="k">"padding"</span>: 0
   }
 }</pre>
+      </li>
+      <li>
+        <div class="proc-num">PROC.003 <span class="step">/ run</span></div>
+        <h3>Restart Claude Code.</h3>
+        <p>Or start a new conversation. The bar appears on the next prompt cycle. No daemon, no service, no node.</p>
+<pre><span class="c">// expected first-render:</span>
+<span class="x">[cold]</span>  ~1.0s   <span class="c">// PS startup + scan</span>
+<span class="x">[warm]</span>  ~0.3s   <span class="c">// cached, &lt;20s old</span></pre>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────── METHODOLOGY -->
+<section class="section" id="methodology">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-num">§ 04</div>
+      <div>
+        <h2 class="section-title"><em>Methodology.</em></h2>
+        <p class="section-kicker">
+          For every <code>.jsonl</code> line that carries a
+          <code>"usage"</code> block in <code>~/.claude/projects/**/*</code>,
+          the script applies the following procedure:
+        </p>
+      </div>
+    </div>
+
+    <div class="methodology">
+      <div class="methodology-text">
+        <p>
+          The percentages are <em>not</em> computed locally; they come straight
+          from <code>rate_limits.five_hour.used_percentage</code> and its
+          7-day sibling — the same authoritative numbers Claude Code uses
+          internally for throttling decisions.
+        </p>
+        <p>
+          The <em>token totals</em> beneath them are summed locally, exactly
+          the way <code>ccusage</code> does it: a recursive scan of every
+          transcript, regex-extracted, deduplicated by <code>message.id</code>,
+          windowed by ISO timestamp.
+        </p>
+        <p>
+          Cost is then computed <em>per-turn</em>, using the actual model
+          family detected on that transcript line — Opus, Sonnet, or Haiku —
+          and the right input / output / cache-read / cache-write rates.
+          Ephemeral cache creation is billed at the 5-minute rate when the
+          breakdown isn't exposed (the API default for unflagged blocks, and
+          the cheaper of the two tiers).
+        </p>
       </div>
 
-      <div class="step">
-        <h3>Restart Claude Code</h3>
-        <p>Or just start a new conversation. The bar appears on the next prompt cycle. No npm, no service, no daemon.</p>
-<pre><span class="c"># That's it.</span>
-<span class="s">✓ status line live</span></pre>
+      <div>
+        <ol class="steps-ol">
+          <li>
+            <span class="idx">01.</span>
+            <span class="body">
+              <strong>Parse timestamp.</strong>
+              <span class="meta">Skip the line if it's outside the 7-day cutoff.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">02.</span>
+            <span class="body">
+              <strong>Dedupe by message.id.</strong>
+              <span class="meta">Assistant turns log once per content block; raw summation would triple-count.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">03.</span>
+            <span class="body">
+              <strong>Sum the four fields.</strong>
+              <span class="meta">input + output + cache_creation + cache_read.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">04.</span>
+            <span class="body">
+              <strong>Price it.</strong>
+              <span class="meta">Detect model family on this transcript line; apply the matching API rate.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">05.</span>
+            <span class="body">
+              <strong>Window the totals.</strong>
+              <span class="meta">Add to 7d. If the timestamp also clears the 5-hour cutoff, add to 5h.</span>
+            </span>
+          </li>
+        </ol>
+
+        <div class="footnote">
+          Field-level regex extraction is ~10× faster than
+          <code>ConvertFrom-Json</code> per line on a 20MB transcript pile.
+          A 20-second JSON cache keeps the bar snappy on every re-render.
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ────────────────────────────────────────── HOW IT WORKS -->
-<section id="how">
-  <div class="wrap">
-    <div class="section-label">Internals</div>
-    <h2>How it counts tokens.</h2>
-    <p class="lede">For every <code>.jsonl</code> line that carries a <code>"usage"</code> block:</p>
-
-    <div class="explain">
-      <ol>
-        <li><strong>Parse the timestamp.</strong> Skip the line if it's outside the 7-day window.</li>
-        <li><strong>Dedupe by <code>message.id</code>.</strong> Assistant turns log once per content block (thinking, tool_use, …) and each entry repeats the same <code>usage</code>. Counting them all triples the number.</li>
-        <li><strong>Sum the four fields:</strong> <code>input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens</code>.</li>
-        <li><strong>Price it.</strong> Detect the model family from the transcript and bill input, output, cache-read, and cache-write at the right rate (5m vs 1h ephemeral cache).</li>
-        <li><strong>Add to 7d. If the timestamp is also inside the 5-hour cutoff, add to 5h.</strong></li>
-      </ol>
-    </div>
-
-    <p style="margin-top: 24px; color: var(--fg-dim); font-size: 14px;">
-      Regex extraction beats <code>ConvertFrom-Json</code> per line by ~10× on a 20MB transcript pile.
-      A 20-second JSON cache (<code>~/.claude/statusline-tokens.cache.json</code>) keeps the bar snappy on every re-render.
-    </p>
-  </div>
-</section>
-
-<footer class="footer">
-  <div class="wrap footer-inner">
+<!-- ─────────────────────────────────────────────────── FOOTER -->
+<footer class="foot">
+  <div class="shell foot-row">
     <div>
-      <span style="color: var(--c-5h);">›</span>
-      claude-statusline-tokens · MIT
+      <span class="uppr">©</span> 2026 Gabriel Dalton
+      <span class="sep">·</span>
+      <span class="uppr">MIT</span>
+      <span class="sep">·</span>
+      Content-Type: text/html
+      <span class="sep">·</span>
+      Last touch: 2026-05-18
     </div>
     <div>
       <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens">github</a>
-      &nbsp;·&nbsp;
+      <span class="sep">·</span>
       <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues">issues</a>
-      &nbsp;·&nbsp;
+      <span class="sep">·</span>
       <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/LICENSE">license</a>
     </div>
   </div>
