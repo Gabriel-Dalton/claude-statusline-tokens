@@ -366,9 +366,39 @@ h1.headline .accent { color: var(--accent); }
 .statusline.compact { font-size: 13.5px; margin-top: 0; }
 
 @media (max-width: 720px) {
-  .term-body { padding: 16px 16px 18px; font-size: 12px; }
-  .statusline { font-size: 12px; }
+  .term-body {
+    padding: 16px 16px 18px;
+    font-size: 12px;
+    /* Wrapping handles narrow widths now; keep auto-scroll as fallback. */
+    overflow-x: auto;
+  }
+  .statusline,
+  .statusline.compact {
+    font-size: 12px;
+    /* Wrap segment-by-segment instead of forcing horizontal scroll inside
+       the terminal mock. Mirrors how a real terminal soft-wraps. */
+    white-space: normal;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0;
+    row-gap: 4px;
+  }
   .statusline.compact { font-size: 12.5px; }
+  .statusline > span { white-space: nowrap; }
+}
+
+@media (max-width: 420px) {
+  /* Narrow phones: stack each segment on its own line and drop pipes —
+     the colour blocks already delimit segments and a wrapping pipe at
+     line edges reads as visual noise. */
+  .statusline,
+  .statusline.compact {
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: 6px;
+  }
+  .statusline .seg-sep { display: none; }
 }
 
 /* ─────────────────────────────────────────── SECTION SHELL */

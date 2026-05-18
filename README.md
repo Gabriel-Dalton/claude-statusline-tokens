@@ -36,6 +36,48 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **20-second on-disk result cache** keyed by current account so switches auto-invalidate
 - **Zero dependencies** beyond PowerShell 5.1 (ships with Windows 10/11) and `git` (for the branch name)
 - **No network calls, no telemetry** — everything reads from your local `~/.claude` directory
+- **Live dashboard companion** — `claude-dashboard.ps1` opens a full-screen, re-rendering view of the same numbers plus a per-project table, opus/sonnet/haiku split, and a 24-hour activity sparkline. See [Dashboard](#dashboard) below.
+
+## Dashboard
+
+Run the dashboard in its own PowerShell window:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File "$env:USERPROFILE\.claude\claude-dashboard.ps1"
+```
+
+```
+CLAUDE USAGE DASHBOARD                          gabriel@accessibilitychecker.org
+
+5-HOUR WINDOW       ████████████░░░░░░░░░░░░░░░░░░  43%  28.2M tok   $117
+     oldest turn rolls out in 4h 26m    opus 322.1M  |  sonnet 0  |  haiku 541.9k
+
+7-DAY WINDOW        █████░░░░░░░░░░░░░░░░░░░░░░░░░  17%  322.7M tok  $932
+     oldest turn rolls out in 4d 11h    4 sessions, 7 projects touched
+
+CURRENT SESSION     34m 46s, 284 turns         28.2M tok  $117
+CONTEXT             94.8k / 200k  (47%)
+
+TOP PROJECTS (7d)                    TOP MODELS (7d)
+grayson-freestyle           137.8M   opus       322.1M       $928
+denman-mall                  68.7M   sonnet          0      $0.00
+redesign-2026                43.8M   haiku       541.9k     $0.14
+
+RECENT ACTIVITY (last 24h, per hour)
+        ▁▅▆▇█          ▃
+24h ago              now
+
+refresh every 20s | Ctrl+C to exit                       last update 12:47:39
+```
+
+Flags:
+
+- `-RefreshSeconds <int>` — how often to re-scan and re-render (default `20`, matches the statusline cache TTL so the two stay in sync).
+- `-SparklineHours <int>` — width of the activity chart in hourly buckets (default `24`).
+- `-Once` — render a single frame and exit, useful for scripting or one-off inspection.
+
+The percentage bars need the statusline to have run at least once in the last 10 minutes — that's how the dashboard learns the authoritative `rate_limits.used_percentage` numbers from Claude Code's hook payload. Until then, the bars show `--%` and you still get tokens, cost, model split, projects, and the sparkline from a direct JSONL scan.
 
 ## Install
 

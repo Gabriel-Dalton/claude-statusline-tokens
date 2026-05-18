@@ -22,7 +22,18 @@
       "Bash(git -C \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens\" check-ignore scripts/node_modules/playwright/package.json)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:ccusage.com)",
-      "PowerShell('{}' | powershell -NoProfile -ExecutionPolicy Bypass -File .\\\\statusline-tokens.ps1)"
+      "PowerShell('{}' | powershell -NoProfile -ExecutionPolicy Bypass -File .\\\\statusline-tokens.ps1)",
+      "Bash(node responsive-check.mjs)",
+      "PowerShell(node -v)",
+      "PowerShell(npm -v)",
+      "Bash(\"C:/Program Files/nodejs/node.exe\" find-overflow.mjs)",
+      "Bash(gh auth *)",
+      "Bash(\"C:/Program Files/nodejs/node.exe\" responsive-check.mjs)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -Command '& { try { & '\\\\''C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\claude-dashboard.ps1'\\\\'' -Once } catch { Write-Host \"ERR: $\\($_.Exception.Message\\)\"; Write-Host \"AT: $\\($_.InvocationInfo.PositionMessage\\)\" } }')",
+      "Bash(xxd \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens/statusline-tokens.ps1\")",
+      "Bash(xxd \"C:/Users/Gabriel-Dalton/Documents/GitHub/claude-statusline-tokens/claude-dashboard.ps1\")",
+      "Bash(powershell *)",
+      "Bash(git *)"
     ]
   }
 }

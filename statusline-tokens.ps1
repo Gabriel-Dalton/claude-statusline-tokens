@@ -321,18 +321,6 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         }
     }
 
-    try {
-        @{
-            computedAtUtc = $nowUtc.ToString('o')
-            orgKey        = $currentOrgKey
-            tok5h         = $tok5h
-            tok7d         = $tok7d
-            cost5h        = $cost5h
-            cost7d        = $cost7d
-            tokSession    = $tokSession
-            costSession   = $costSession
-        } | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
-    } catch {}
 }
 
 # --- native percentages from hook stdin -----------------------------------
@@ -342,6 +330,30 @@ if ($hook -and $hook.rate_limits) {
     if ($hook.rate_limits.five_hour) { $pct5h = $hook.rate_limits.five_hour.used_percentage }
     if ($hook.rate_limits.seven_day) { $pct7d = $hook.rate_limits.seven_day.used_percentage }
 }
+
+# Always rewrite the cache so claude-dashboard.ps1 (which reads this same
+# file) picks up fresh percentages on every Claude Code turn, even on cache
+# HIT paths where we skipped re-scanning tokens. The pcts come from the hook
+# stdin which is provided on every invocation; tokens come from either the
+# fresh scan above or the prior cache values loaded earlier in the script.
+try {
+    $payload = @{
+        computedAtUtc = $nowUtc.ToString('o')
+        orgKey        = $currentOrgKey
+        tok5h         = $tok5h
+        tok7d         = $tok7d
+        cost5h        = $cost5h
+        cost7d        = $cost7d
+        tokSession    = $tokSession
+        costSession   = $costSession
+    }
+    if ($null -ne $pct5h) { $payload.pct5h = [double]$pct5h }
+    if ($null -ne $pct7d) { $payload.pct7d = [double]$pct7d }
+    if ($null -ne $pct5h -or $null -ne $pct7d) {
+        $payload.pctSavedAtUtc = $nowUtc.ToString('o')
+    }
+    $payload | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
+} catch {}
 
 # --- context tokens: last usage block in the current session transcript --
 $ctxTokens = [long]0

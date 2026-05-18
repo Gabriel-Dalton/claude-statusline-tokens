@@ -238,6 +238,30 @@ h1.headline {
 
 @media (max-width: 720px) {
   .term-body { padding: 14px 16px 16px; font-size: 12px; }
+  /* Wrap segment-by-segment instead of forcing a horizontal scroll inside
+     the terminal mock. Mirrors how a real terminal soft-wraps. */
+  .statusline,
+  .statusline.compact {
+    white-space: normal;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0;
+    row-gap: 4px;
+  }
+  .statusline > span { white-space: nowrap; }
+}
+
+@media (max-width: 420px) {
+  /* Stack one segment per line on narrow phones and drop pipes — the
+     colour blocks already delimit segments. */
+  .statusline,
+  .statusline.compact {
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: 6px;
+  }
+  .statusline .seg-sep { display: none; }
 }
 
 /* ─────────────────────────────────────────── SECTION */
