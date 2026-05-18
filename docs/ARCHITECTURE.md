@@ -223,7 +223,9 @@ Tune `$cacheTtlSec` to taste. Setting it to `0` disables the cache entirely.
 
 ## Encoding
 
-Two lines at the top of the script force UTF-8 output:
+Two different concerns, both of which had to be solved before non-ASCII characters in the output rendered correctly on Windows PowerShell 5.1:
+
+**1. Output encoding** — what PowerShell sends to stdout. The script forces UTF-8:
 
 ```powershell
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -231,7 +233,13 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = $utf8NoBom
 ```
 
-Without this, PowerShell defaults to the system code page (often Windows-1252), which silently downgrades any non-ASCII character — em-dashes, glyphs, anything outside Latin-1 — to `?` when flushed to stdout. The status line renders fine in plain ASCII without this block, but the moment you customize a segment with a special character, you'd hit the issue.
+Without this, PowerShell defaults to the system code page (often Windows-1252) and silently downgrades any non-ASCII character to `?` when flushed.
+
+**2. Source encoding** — how PowerShell reads the `.ps1` file itself. Windows PowerShell 5.1 reads `.ps1` files using the system code page **unless the file has a UTF-8 BOM (`EF BB BF`)** or is UTF-16 with a BOM. If the file is UTF-8 without a BOM, a literal like `'—'` in the source is decoded as three Windows-1252 characters (`â€"`) — classic mojibake — before the output encoding above can do anything about it. The script is therefore committed with a UTF-8 BOM, and the one runtime em-dash is also constructed via `[char]0x2014` as belt-and-suspenders against re-save mishaps.
+
+The combination of `Console::OutputEncoding = UTF8` + a UTF-8 BOM on the source + runtime-constructed Unicode for output strings is what lets `5h —` render correctly when the rate-limit data hasn't arrived yet.
+
+A third subtlety: file *reads* of `~/.claude.json` and the sidecar JSON files use `Get-Content -Raw -Encoding UTF8` explicitly, because Claude Code writes those files without a BOM and PS 5.1's default `Get-Content` would otherwise mangle non-ASCII organization names.
 
 ## Performance budget
 

@@ -39,22 +39,184 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 
 ## Install
 
-1. Save `statusline-tokens.ps1` to `%USERPROFILE%\.claude\statusline-tokens.ps1`.
-2. Add this `statusLine` block to `%USERPROFILE%\.claude\settings.json` (also at [`examples/settings.json`](examples/settings.json)):
+**Requirements:** Windows 10 or 11, Windows PowerShell 5.1 (preinstalled), Claude Code already set up. No npm, no pip, no extra modules.
 
-   ```json
-   {
-     "statusLine": {
-       "type": "command",
-       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
-       "padding": 0
-     }
-   }
-   ```
+Pick the path that fits you. The fast path is for people comfortable editing JSON; the guided path holds your hand and tells you exactly what to do if something goes wrong.
 
-3. Restart Claude Code (or just start a new conversation). The status line refreshes on the next prompt cycle.
+### Fast path (30 seconds, for AI/dev engineers)
 
-> **Tip:** if `%USERPROFILE%` doesn't get expanded in your harness, use the absolute path — e.g. `C:\\Users\\you\\.claude\\statusline-tokens.ps1`.
+From a PowerShell prompt:
+
+```powershell
+# 1. Download the script straight into Claude Code's config dir
+Invoke-WebRequest `
+  -Uri https://raw.githubusercontent.com/Gabriel-Dalton/claude-statusline-tokens/main/statusline-tokens.ps1 `
+  -OutFile "$env:USERPROFILE\.claude\statusline-tokens.ps1"
+
+# 2. Open settings.json and add the statusLine block shown below
+notepad "$env:USERPROFILE\.claude\settings.json"
+```
+
+The block to **merge** into `settings.json` (if the file already has other keys, add this alongside them — don't replace the whole file):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
+    "padding": 0
+  }
+}
+```
+
+Save, start a new Claude Code conversation, done. The script never touches the network and only reads files under `~/.claude`.
+
+> The repo ships a ready-to-copy version at [`examples/settings.json`](examples/settings.json).
+
+### Guided path (5 minutes, for first-time Claude Code users)
+
+If you've never customized Claude Code before, follow these steps in order. Every step is verifiable so you'll know if it worked before moving on.
+
+**Step 1 — Open PowerShell.**
+
+Press `Win + R`, type `powershell`, hit Enter. A blue (or black) window appears with a prompt like `PS C:\Users\You>`.
+
+**Step 2 — Confirm Claude Code is installed and has been used at least once.**
+
+```powershell
+Test-Path "$env:USERPROFILE\.claude"
+```
+
+This must print `True`. If it prints `False`, install Claude Code first and run one conversation — it creates the `.claude` folder on first launch.
+
+**Step 3 — Download the script.**
+
+```powershell
+Invoke-WebRequest `
+  -Uri https://raw.githubusercontent.com/Gabriel-Dalton/claude-statusline-tokens/main/statusline-tokens.ps1 `
+  -OutFile "$env:USERPROFILE\.claude\statusline-tokens.ps1"
+```
+
+Verify it landed:
+
+```powershell
+Test-Path "$env:USERPROFILE\.claude\statusline-tokens.ps1"   # → True
+```
+
+> No internet, or behind a corporate proxy? Download the file from the [GitHub repo](https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/statusline-tokens.ps1) in your browser via the **"Download raw file"** button, then drag it into `C:\Users\<you>\.claude\`. Make sure the resulting file is named exactly `statusline-tokens.ps1` (no `.txt` suffix — Windows sometimes adds one).
+
+**Step 4 — Open `settings.json` in Notepad.**
+
+```powershell
+notepad "$env:USERPROFILE\.claude\settings.json"
+```
+
+If the file doesn't exist yet, Notepad will offer to create it — click Yes and start with `{}` as the contents.
+
+**Step 5 — Add the `statusLine` block.**
+
+Inside the outermost `{ ... }` of `settings.json`, add this key (merging — don't delete what's already there):
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
+  "padding": 0
+}
+```
+
+If `settings.json` was empty (`{}`), the whole file should now look like the [`examples/settings.json`](examples/settings.json) snippet in this repo. If it already had keys, the file should look like:
+
+```json
+{
+  "theme": "dark",
+  "statusLine": {
+    "type": "command",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
+    "padding": 0
+  }
+}
+```
+
+(Note the comma after every key except the last one — that's JSON's only formatting rule.)
+
+Save the file (`Ctrl + S`) and close Notepad.
+
+**Step 6 — Sanity-check the JSON is valid.**
+
+```powershell
+Get-Content -Raw "$env:USERPROFILE\.claude\settings.json" | ConvertFrom-Json | Out-Null
+```
+
+No output = valid JSON. If you see a red `ConvertFrom-Json` error, you have a typo — a missing comma or a stray quote. Open the file in Notepad, compare it to the example above, fix, retry. Claude Code itself will refuse to load malformed JSON, so it's worth catching here.
+
+**Step 7 — Smoke-test the script.**
+
+Run it once with a fake hook payload to confirm PowerShell can execute it:
+
+```powershell
+$j = '{"workspace":{"current_dir":"."},"model":{"display_name":"Opus 4.7"},"rate_limits":{"five_hour":{"used_percentage":42},"seven_day":{"used_percentage":17}}}'
+$j | powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\statusline-tokens.ps1"
+```
+
+You should see a colored status line print to your terminal. If you get a permission error, see *Troubleshooting* below.
+
+**Step 8 — Launch Claude Code.**
+
+Open Claude Code (close any existing window first). The status line appears below the prompt on the next turn. If it doesn't show up, see *Troubleshooting*.
+
+### Troubleshooting
+
+<details>
+<summary><strong>"Running scripts is disabled on this system"</strong></summary>
+
+PowerShell's execution policy is blocking the script. Two fixes:
+
+- **Just for this script** — the `-ExecutionPolicy Bypass` flag in the `command` line already handles this when Claude Code launches it. If you saw this when running the smoke-test command in Step 7, you can ignore the warning — Claude Code will succeed because the flag is present in the configured command.
+- **Permanently for your user** — `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`. This is the Microsoft-recommended setting and is safe.
+
+Do **not** run `Set-ExecutionPolicy Unrestricted -Scope LocalMachine` — that's broader than necessary.
+</details>
+
+<details>
+<summary><strong>Status line shows but the 5h / 7d sections render as <code>â€"</code> instead of <code>—</code></strong></summary>
+
+This was a bug in pre-`0.3.x` versions where the script's source file lacked a UTF-8 BOM and PowerShell 5.1 misread the literal em-dash character. Re-download `statusline-tokens.ps1` from the repo to get the fixed version. The current file ships with a UTF-8 BOM and constructs the em-dash at runtime via `[char]0x2014`, so this can't happen on a fresh download.
+</details>
+
+<details>
+<summary><strong>Status line shows percentages but token counts are 0</strong></summary>
+
+The script reads transcripts from `~/.claude/projects/**/*.jsonl`. If that directory is empty or doesn't exist, token totals will be 0 even though the percentages render. Use Claude Code for a few turns and the counts will populate (cache TTL is 20s).
+</details>
+
+<details>
+<summary><strong>Status line doesn't appear at all in Claude Code</strong></summary>
+
+Three things to check, in order:
+
+1. **JSON validity** — run the check from Step 6 again. If `settings.json` is malformed, Claude Code silently falls back to no custom status line.
+2. **The PowerShell command works standalone** — re-run the Step 7 smoke test. If it errors, the status-line command will too.
+3. **`%USERPROFILE%` expanded correctly** — Claude Code launches the command via `cmd.exe /c …`, which expands `%USERPROFILE%`. If your harness doesn't, replace it with the absolute path: `C:\\Users\\<your-name>\\.claude\\statusline-tokens.ps1` (note the doubled backslashes, required for JSON strings).
+</details>
+
+<details>
+<summary><strong>I'm on macOS or Linux</strong></summary>
+
+This script is Windows-only at the moment — a bash/zsh port is on the roadmap (`CONTRIBUTING.md`). The transcript layout is identical on every platform, so the port is straightforward; PRs welcome.
+</details>
+
+<details>
+<summary><strong>I want to uninstall</strong></summary>
+
+```powershell
+Remove-Item "$env:USERPROFILE\.claude\statusline-tokens.ps1"
+Remove-Item "$env:USERPROFILE\.claude\statusline-tokens.cache.json" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.claude\statusline-accounts.json"     -ErrorAction SilentlyContinue
+```
+
+Then edit `~/.claude/settings.json` and remove the `statusLine` block.
+</details>
 
 ## What you see
 
