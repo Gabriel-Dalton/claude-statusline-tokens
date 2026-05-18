@@ -131,29 +131,82 @@ $accountsPath      = [System.IO.Path]::Combine($userProfile, '.claude', 'statusl
 # filesystems produce duplicate keys (e.g. "...\GitHub\VCASSE" and
 # "...\github\vcasse") that PS 5.1's parser rejects. Instead, walk the
 # JSON to extract just the oauthAccount object and parse that.
+#
+# Implementation note: we navigate by [string]::IndexOf / IndexOfAny rather
+# than iterating $content[$i] one [char] at a time. The earlier per-char
+# walk worked on ASCII names but read each UTF-16 code unit independently,
+# which means a non-BMP codepoint (e.g. emoji 🚀 in organizationName) is
+# decomposed into two lone surrogates during iteration. The brace counter
+# itself is fine (braces are ASCII), but per-char state-machine logic on
+# lone surrogates is fragile under PS 5.1's [char]/[string] coercion rules.
+# Seeking the next interesting ASCII byte sidesteps that class of bug
+# entirely and is faster on the multi-KB ~/.claude.json file.
 function Get-JsonObject([string]$content, [string]$keyName) {
     $needle = '"' + $keyName + '"'
     $start = $content.IndexOf($needle)
     if ($start -lt 0) { return $null }
     $braceStart = $content.IndexOf('{', $start)
     if ($braceStart -lt 0) { return $null }
-    $depth = 0; $inStr = $false; $esc = $false
-    for ($i = $braceStart; $i -lt $content.Length; $i++) {
-        $c = $content[$i]
-        if ($esc) { $esc = $false; continue }
+    # Significant characters: opening/closing brace, string delimiter,
+    # backslash (escape inside string). Everything else — including any
+    # high/low surrogate halves of an astral codepoint — is skipped.
+    $interesting = [char[]]@('{','}','"','\')
+    $i = $braceStart
+    $depth = 0
+    $inStr = $false
+    while ($i -lt $content.Length) {
         if ($inStr) {
-            if ($c -eq '\') { $esc = $true; continue }
-            if ($c -eq '"') { $inStr = $false }
+            # Inside a string: only " (terminator) and \ (next char is escaped)
+            # matter. IndexOfAny jumps directly to the next one.
+            $j = $content.IndexOfAny($interesting, $i)
+            if ($j -lt 0) { return $null }
+            $c = $content[$j]
+            if ($c -eq '\') {
+                # Skip the escaped character. \uXXXX is fine: we resume two
+                # positions later and IndexOfAny will find the next " anyway,
+                # whatever the four hex digits are.
+                $i = $j + 2
+                continue
+            }
+            if ($c -eq '"') {
+                $inStr = $false
+                $i = $j + 1
+                continue
+            }
+            # Stray { or } inside a string — not interesting, advance past it.
+            $i = $j + 1
             continue
         }
-        if ($c -eq '"') { $inStr = $true; continue }
-        if ($c -eq '{') { $depth++ }
-        elseif ($c -eq '}') {
+        # Outside any string: braces change depth, " opens a string. \ is not
+        # meaningful here (JSON doesn't allow bare backslashes outside strings).
+        $j = $content.IndexOfAny($interesting, $i)
+        if ($j -lt 0) { return $null }
+        $c = $content[$j]
+        if ($c -eq '"') {
+            $inStr = $true
+            $i = $j + 1
+            continue
+        }
+        if ($c -eq '{') {
+            $depth++
+            $i = $j + 1
+            continue
+        }
+        if ($c -eq '}') {
             $depth--
             if ($depth -eq 0) {
-                return $content.Substring($braceStart, $i - $braceStart + 1)
+                # Both endpoints are ASCII braces, so this substring slice
+                # cannot bisect a surrogate pair; the returned block is
+                # well-formed UTF-16 even when organizationName contains
+                # astral-plane characters.
+                return $content.Substring($braceStart, $j - $braceStart + 1)
             }
+            $i = $j + 1
+            continue
         }
+        # Backslash outside a string — shouldn't happen in valid JSON, but
+        # don't loop forever on it.
+        $i = $j + 1
     }
     return $null
 }
