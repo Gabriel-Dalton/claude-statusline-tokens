@@ -10,7 +10,8 @@
       "PowerShell(Test-Path *)",
       "Bash(claude --version)",
       "Bash(npx --version)",
-      "PowerShell(claude *)"
+      "PowerShell(claude *)",
+      "Bash(claude mcp *)"
     ]
   }
 }
