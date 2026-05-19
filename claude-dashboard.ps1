@@ -137,6 +137,26 @@ $fgHaiku  = "$esc[38;5;108m"
 $fgProj   = "$esc[38;5;215m"
 $fgBarDim = "$esc[38;5;238m"
 
+# Headroom palette — same thresholds as the statusline so the bars and the
+# 5h / 7d % readouts agree. Override with STATUSLINE_PCT_THRESHOLDS="warn,crit".
+$fgPctGreen  = "$esc[38;5;77m"
+$fgPctYellow = "$esc[38;5;221m"
+$fgPctRed    = "$esc[38;5;203m"
+
+$pctWarn = 50.0
+$pctCrit = 80.0
+if ($env:STATUSLINE_PCT_THRESHOLDS -match '^\s*(\d{1,3})\s*,\s*(\d{1,3})\s*$') {
+    $pctWarn = [double]$Matches[1]
+    $pctCrit = [double]$Matches[2]
+}
+
+function Get-PctColor([double]$pct) {
+    if ($pct -lt 0) { return $fgDim }
+    if ($pct -ge $pctCrit) { return $fgPctRed }
+    if ($pct -ge $pctWarn) { return $fgPctYellow }
+    return $fgPctGreen
+}
+
 function Color([string]$fg, [string]$text) { "$fg$text$reset" }
 
 # ---------------------------------------------------------------------------
@@ -553,13 +573,16 @@ function Build-Frame {
     # authoritative numbers Anthropic ships in the hook payload. If the
     # statusline hasn't run recently (no Claude Code activity since launch),
     # the values are -1 and the bar renders empty with a "--%" label.
-    $bar5 = Make-Bar $Scan.pct5h 30 $fg5h $fgBarDim
+    # Bar fill and % text both color-shift green -> yellow -> red as headroom
+    # disappears, so a glance at the dashboard tells you where you stand.
+    $pctColor5 = Get-PctColor $Scan.pct5h
+    $bar5 = Make-Bar $Scan.pct5h 30 $pctColor5 $fgBarDim
     $countdown5 = [string]$emDash
     if ($Scan.oldest5h) {
         $rollOut = $Scan.oldest5h.AddHours(5) - $NowUtc
         if ($rollOut.TotalSeconds -gt 0) { $countdown5 = Fmt-Duration $rollOut }
     }
-    $pctText5 = if ($Scan.pct5h -ge 0) { ('{0,3:0}%' -f $Scan.pct5h) } else { ' --%' }
+    $pctText5 = if ($Scan.pct5h -ge 0) { (Color $pctColor5 ('{0,3:0}%' -f $Scan.pct5h)) } else { (Color $fgDim ' --%') }
     [void]$lines.Add((Color $fg5h "5-HOUR WINDOW") + (' ' * 6) +
         ("{0} {1}  {2} tok   {3}" -f $bar5, $pctText5, (Fmt-Tokens $Scan.tok5h), (Fmt-Cost $Scan.cost5h)))
     [void]$lines.Add((Color $fgDim "     oldest turn rolls out in $countdown5") + '   ' +
@@ -570,13 +593,14 @@ function Build-Frame {
     [void]$lines.Add('')
 
     # 7-day window ---------------------------------------------------------
-    $bar7 = Make-Bar $Scan.pct7d 30 $fg7d $fgBarDim
+    $pctColor7 = Get-PctColor $Scan.pct7d
+    $bar7 = Make-Bar $Scan.pct7d 30 $pctColor7 $fgBarDim
     $countdown7 = [string]$emDash
     if ($Scan.oldest7d) {
         $rollOut = $Scan.oldest7d.AddDays(7) - $NowUtc
         if ($rollOut.TotalSeconds -gt 0) { $countdown7 = Fmt-Duration $rollOut }
     }
-    $pctText7 = if ($Scan.pct7d -ge 0) { ('{0,3:0}%' -f $Scan.pct7d) } else { ' --%' }
+    $pctText7 = if ($Scan.pct7d -ge 0) { (Color $pctColor7 ('{0,3:0}%' -f $Scan.pct7d)) } else { (Color $fgDim ' --%') }
     $projCount = ($Scan.projectTokens.Keys).Count
     [void]$lines.Add((Color $fg7d "7-DAY WINDOW ") + (' ' * 6) +
         ("{0} {1}  {2} tok   {3}" -f $bar7, $pctText7, (Fmt-Tokens $Scan.tok7d), (Fmt-Cost $Scan.cost7d)))
