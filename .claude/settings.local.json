@@ -48,7 +48,10 @@
       "PowerShell(Copy-Item *)",
       "PowerShell(Out-Null *)",
       "Bash(xxd)",
-      "PowerShell(Join-Path *)"
+      "PowerShell(Join-Path *)",
+      "PowerShell($hash1 = \\(Get-FileHash \"C:\\\\Users\\\\Gabriel-Dalton\\\\.claude\\\\statusline-tokens.ps1\"\\).Hash; $hash2 = \\(Get-FileHash \"C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\statusline-tokens.ps1\"\\).Hash; if \\($hash1 -eq $hash2\\) { Write-Host \"IDENTICAL\" } else { Write-Host \"DIFFERENT\" }; Write-Host \"personal: $hash1\"; Write-Host \"repo:     $hash2\")",
+      "PowerShell($now = [DateTime]::UtcNow; $r5 = $now.AddHours\\(2\\).AddMinutes\\(15\\).ToString\\('o'\\); $r7 = $now.AddDays\\(3\\).AddHours\\(12\\).ToString\\('o'\\); $payload = @{ cwd = \\(Get-Location\\).Path; session_id = 'test'; transcript_path = ''; model = @{ id = 'claude-opus-4-7'; display_name = 'Opus 4.7' }; workspace = @{ current_dir = \\(Get-Location\\).Path }; rate_limits = @{ five_hour = @{ used_percentage = 23; resets_at = $r5 }; seven_day = @{ used_percentage = 45; resets_at = $r7 } } } | ConvertTo-Json -Depth 5 -Compress; Write-Host \"INPUT: $payload\"; Write-Host \"---\"; $out = $payload | powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\Gabriel-Dalton\\\\.claude\\\\statusline-tokens.ps1\"; Write-Host \"OUTPUT:\"; Write-Host $out)",
+      "PowerShell($now = [DateTime]::UtcNow; $r5 = $now.AddHours\\(2\\).AddMinutes\\(15\\).ToString\\('o'\\); $r7 = $now.AddDays\\(3\\).AddHours\\(12\\).ToString\\('o'\\); $payload = @{ cwd = \\(Get-Location\\).Path; session_id = 'test'; transcript_path = ''; model = @{ id = 'claude-opus-4-7'; display_name = 'Opus 4.7' }; workspace = @{ current_dir = \\(Get-Location\\).Path }; rate_limits = @{ five_hour = @{ used_percentage = 23; resets_at = $r5 }; seven_day = @{ used_percentage = 45; resets_at = $r7 } } } | ConvertTo-Json -Depth 5 -Compress; $out = $payload | powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\Gabriel-Dalton\\\\Documents\\\\GitHub\\\\claude-statusline-tokens\\\\statusline-tokens.ps1\"; Write-Host $out)"
     ]
   }
 }

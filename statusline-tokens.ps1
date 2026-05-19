@@ -253,6 +253,52 @@ function Fmt-Cost([double]$d) {
     return '$0.00'
 }
 
+# Compact relative duration: "45m" / "2h15m" / "3d12h" / "5d"
+function Fmt-Relative([TimeSpan]$ts) {
+    if ($ts.TotalSeconds -le 0) { return 'now' }
+    $totalMin = [int][math]::Floor($ts.TotalMinutes)
+    if ($totalMin -lt 60) { return ('{0}m' -f $totalMin) }
+    $hours = [int][math]::Floor($ts.TotalHours)
+    if ($hours -lt 24) {
+        $mins = $totalMin - ($hours * 60)
+        if ($mins -gt 0) { return ('{0}h{1}m' -f $hours, $mins) }
+        return ('{0}h' -f $hours)
+    }
+    $days = [int][math]::Floor($ts.TotalDays)
+    $remHours = $hours - ($days * 24)
+    if ($remHours -gt 0) { return ('{0}d{1}h' -f $days, $remHours) }
+    return ('{0}d' -f $days)
+}
+
+# Local clock time, lowercase am/pm; optional day-of-week prefix for far-out resets
+function Fmt-AbsLocal([DateTime]$utc, [bool]$includeDay) {
+    $local = $utc.ToLocalTime()
+    $h = $local.Hour
+    $m = $local.Minute
+    $ampm = 'am'; if ($h -ge 12) { $ampm = 'pm' }
+    $h12 = $h % 12; if ($h12 -eq 0) { $h12 = 12 }
+    if ($m -eq 0) { $time = '{0}{1}' -f $h12, $ampm }
+    else          { $time = '{0}:{1:D2}{2}' -f $h12, $m, $ampm }
+    if ($includeDay) {
+        $day = $local.ToString('ddd', [Globalization.CultureInfo]::InvariantCulture)
+        return ('{0} {1}' -f $day, $time)
+    }
+    return $time
+}
+
+# "2h15m @ 7:30pm" — returns $null on missing/unparseable/past timestamps
+function Fmt-Reset($iso, [bool]$includeDay) {
+    if ([string]::IsNullOrEmpty($iso)) { return $null }
+    $resetUtc = $null
+    try { $resetUtc = [DateTime]::Parse($iso).ToUniversalTime() } catch {
+        Write-DebugLog $_ -Scope 'reset-parse'
+        return $null
+    }
+    $ts = $resetUtc - [DateTime]::UtcNow
+    if ($ts.TotalSeconds -le 0) { return $null }
+    return ('{0} @ {1}' -f (Fmt-Relative $ts), (Fmt-AbsLocal $resetUtc $includeDay))
+}
+
 # --- token sums across the rolling windows ---------------------------------
 $nowUtc = [DateTime]::UtcNow
 $cut5h  = $nowUtc.AddHours(-5)
@@ -950,8 +996,19 @@ if ($model)     { $parts += (Color $fgMod $model) }
 $loading = '--%'
 if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = $loading }
 if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = $loading }
-$parts += (Color $fg5h      ("5h {0} ({1} tok, {2})" -f $p5, (Fmt-Tokens $tok5h),      (Fmt-Cost $cost5h)))
-$parts += (Color $fg7d      ("7d {0} ({1} tok, {2})" -f $p7, (Fmt-Tokens $tok7d),      (Fmt-Cost $cost7d)))
+# Reset countdown + clock time, e.g. "2h15m @ 7:30pm" for 5h, "3d12h @ Wed 3pm" for 7d.
+# Comes from rate_limits.{five_hour,seven_day}.resets_at in the hook payload (normalized
+# via Get-HookField at the top). Returns $null when the field is missing — typical at
+# session start before Claude Code has issued its first response — and that segment is
+# then omitted gracefully so the line still renders.
+$r5 = Fmt-Reset $hookFields.resets5h $false
+$r7 = Fmt-Reset $hookFields.resets7d $true
+$body5h = "{0} tok, {1}" -f (Fmt-Tokens $tok5h), (Fmt-Cost $cost5h)
+if ($r5) { $body5h = '{0}, {1}' -f $body5h, $r5 }
+$body7d = "{0} tok, {1}" -f (Fmt-Tokens $tok7d), (Fmt-Cost $cost7d)
+if ($r7) { $body7d = '{0}, {1}' -f $body7d, $r7 }
+$parts += (Color $fg5h      ("5h {0} ({1})" -f $p5, $body5h))
+$parts += (Color $fg7d      ("7d {0} ({1})" -f $p7, $body7d))
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
 $parts += (Color $fgCtx     ("ctx {0}"               -f       (Fmt-Tokens $ctxTokens)))
 
