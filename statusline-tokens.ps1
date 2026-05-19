@@ -980,6 +980,28 @@ $fg7d      = "$esc[38;5;108m"
 $fgSession = "$esc[38;5;178m"   # current work-burst, every account (gold)
 $fgCtx     = "$esc[38;5;110m"
 
+# Headroom palette for the % readout, layered over the segment color.
+# Thresholds: <50 green, 50-79 yellow, >=80 red. Override with the
+# STATUSLINE_PCT_THRESHOLDS env var, e.g. "65,85" to shift the bands.
+$fgPctGreen  = "$esc[38;5;77m"    # 77  = soft green, easy on the eye
+$fgPctYellow = "$esc[38;5;221m"   # 221 = warm amber
+$fgPctRed    = "$esc[38;5;203m"   # 203 = clear red without screaming
+
+$pctWarn = 50.0
+$pctCrit = 80.0
+if ($env:STATUSLINE_PCT_THRESHOLDS -match '^\s*(\d{1,3})\s*,\s*(\d{1,3})\s*$') {
+    $pctWarn = [double]$Matches[1]
+    $pctCrit = [double]$Matches[2]
+}
+
+function Get-PctColor([object]$pct) {
+    if ($null -eq $pct) { return $fgDim }
+    $v = [double]$pct
+    if ($v -ge $pctCrit) { return $fgPctRed }
+    if ($v -ge $pctWarn) { return $fgPctYellow }
+    return $fgPctGreen
+}
+
 function Color($fg, $text) { "$fg$text$reset" }
 
 $parts = @()
@@ -1007,8 +1029,16 @@ $body5h = "{0} tok, {1}" -f (Fmt-Tokens $tok5h), (Fmt-Cost $cost5h)
 if ($r5) { $body5h = '{0}, {1}' -f $body5h, $r5 }
 $body7d = "{0} tok, {1}" -f (Fmt-Tokens $tok7d), (Fmt-Cost $cost7d)
 if ($r7) { $body7d = '{0}, {1}' -f $body7d, $r7 }
-$parts += (Color $fg5h      ("5h {0} ({1})" -f $p5, $body5h))
-$parts += (Color $fg7d      ("7d {0} ({1})" -f $p7, $body7d))
+
+# The percentage gets its own headroom color (green/yellow/red) layered
+# over the segment's identity color so the surrounding "5h … (…)" still
+# reads as the 5h block. Loading state ('--%') stays in the segment color.
+$pct5Color = if ($null -ne $pct5h) { Get-PctColor $pct5h } else { $fg5h }
+$pct7Color = if ($null -ne $pct7d) { Get-PctColor $pct7d } else { $fg7d }
+$p5Tinted = "$pct5Color$p5$reset$fg5h"
+$p7Tinted = "$pct7Color$p7$reset$fg7d"
+$parts += (Color $fg5h      ("5h {0} ({1})" -f $p5Tinted, $body5h))
+$parts += (Color $fg7d      ("7d {0} ({1})" -f $p7Tinted, $body7d))
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
 $parts += (Color $fgCtx     ("ctx {0}"               -f       (Fmt-Tokens $ctxTokens)))
 
