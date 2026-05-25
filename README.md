@@ -27,6 +27,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 
 ## Features
 
+- **Color-coded headroom** — the 5h and 7d percentages tint **green** (< 50%), **yellow** (50–79%), **red** (≥ 80%) so a glance tells you where you stand. Tweak the bands with `STATUSLINE_PCT_THRESHOLDS=warn,crit` (e.g. `STATUSLINE_PCT_THRESHOLDS=65,85`)
 - **Percentage + tokens + $ in one line** for both the 5h block and the 7d weekly limit
 - **Session-based "current burst" indicator** that captures continuous activity regardless of clock-midnight or account switches — see [`docs/SESSION.md`](docs/SESSION.md)
 - **Multi-account aware** — the 5h / 7d numbers track the account you're currently signed into; the session segment is account-independent. Account switches are detected automatically via `~/.claude.json`'s `oauthAccount.organizationUuid`. See [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md)
@@ -314,8 +315,8 @@ Then edit `~/.claude/settings.json` and remove the `statusLine` block.
 | working dir | `workspace.current_dir` from the hook JSON | orange | — |
 | git branch | `git rev-parse --abbrev-ref HEAD` in that dir | tan | — |
 | model | `model.display_name` from the hook JSON | purple | — |
-| **5h % + tokens + $** | native `rate_limits.five_hour` for the %; transcript scan for tokens and cost | cyan | **current account** |
-| **7d % + tokens + $** | native `rate_limits.seven_day` for the %; transcript scan for tokens and cost | green | **current account** |
+| **5h % + tokens + $** | native `rate_limits.five_hour` for the %; transcript scan for tokens and cost | cyan, % shifts green/yellow/red | **current account** |
+| **7d % + tokens + $** | native `rate_limits.seven_day` for the %; transcript scan for tokens and cost | green, % shifts green/yellow/red | **current account** |
 | **session tokens + $** | contiguous activity, walking back until a 30-minute gap | gold | **every account in the burst** |
 | ctx | sum of `input + cache` tokens from the last assistant turn of the current session | blue | — |
 
