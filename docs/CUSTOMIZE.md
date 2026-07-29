@@ -189,15 +189,23 @@ Or delete the cache-write block at the bottom of the scan branch to prevent the 
 
 ```powershell
 # try {
-#     @{
-#         computedAtUtc = $nowUtc.ToString('o')
-#         tok5h         = $tok5h
-#         tok7d         = $tok7d
-#         cost5h        = $cost5h
-#         cost7d        = $cost7d
-#     } | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
-# } catch {}
+#     $payload = @{ schemaVersion = $cacheSchemaVersion; ... }
+#     $body = $payload | ConvertTo-Json -Compress -Depth 6 -ErrorAction Stop
+#     [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
+# } catch { Write-DebugLog $_ -Scope 'cache-write' }
 ```
+
+Two things to know before you do:
+
+- **`claude-dashboard.ps1` reads this file** for its progress bars — the
+  authoritative rate-limit percentages are persisted here (`pct5h` / `pct7d`),
+  not re-derived. Disabling the write leaves the dashboard showing `--%`.
+- **The reset countdown degrades.** The last-seen `resets_at` is cached so the
+  countdown survives renders where Claude Code sends no `rate_limits` block,
+  which is every render before its first response of a session.
+
+See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md#the-20-second-cache) for the full
+payload.
 
 ## Debugging
 

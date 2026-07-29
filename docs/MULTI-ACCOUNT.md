@@ -93,7 +93,9 @@ function Account-At([DateTime]$t) {
 }
 ```
 
-When `$acct.org` matches the current account, the turn's tokens go into the 5h/7d/today buckets. Otherwise, they're skipped for per-account totals but still count toward the `all` segment.
+When `$acct.org` matches the current account, the turn's tokens go into the **5h and 7d** totals. Otherwise they're skipped for those, because those two segments exist to mirror the quota Claude Code is actually enforcing against the account you're signed into.
+
+Every turn is still captured for **session** detection regardless of which account owned it. The session segment tracks your current burst of work, and a mid-session account switch shouldn't fragment it into two halves — so session is deliberately account-independent while 5h/7d are not.
 
 ## Pre-install history
 

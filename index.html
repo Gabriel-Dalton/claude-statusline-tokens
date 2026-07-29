@@ -1150,7 +1150,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="term-body">
         <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
         <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1311,7 +1311,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Close-up of the status line showing six colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, and current context.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1364,8 +1364,8 @@ h1.headline .accent { color: var(--accent); }
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #2563eb;"><span class="swatch" style="background: #60a5fa;"></span>context</td>
-          <td data-col="Sample" class="sample">63.0k</td>
-          <td data-col="Derivation" class="source">last <code>usage</code> block in this session's transcript</td>
+          <td data-col="Sample" class="sample">63.0k (6%)</td>
+          <td data-col="Derivation" class="source">last <code>usage</code> block in this session's transcript; % from <code>context_window.used_percentage</code></td>
           <td data-col="ANSI" class="source">110</td>
         </tr>
       </tbody>

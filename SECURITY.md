@@ -31,9 +31,17 @@ The script reads from your local filesystem only. Specifically:
 
 - `~/.claude/statusline-accounts.json` (its own history).
 - `~/.claude/statusline-tokens.cache.json` (its own cache).
-- `~/.claude/statusline-tokens.log` — only when the `STATUSLINE_DEBUG`
-  environment variable is set, and only with debug trace lines the script
-  itself emits.
+
+That is the complete list. Those two files are the only things the script
+creates or modifies.
+
+> A debug log at `~/.claude/statusline-tokens.log`, gated behind a
+> `STATUSLINE_DEBUG` environment variable, is [planned][debug-log] but **not
+> implemented** — `Write-DebugLog` is currently an intentional no-op, so no
+> log file is written under any circumstances. This document previously
+> listed it as though it shipped.
+
+[debug-log]: https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues/17
 
 It does **not** modify `~/.claude.json`, the transcript JSONLs, or
 `~/.claude/settings.json` (the setup script modifies `settings.json` once,

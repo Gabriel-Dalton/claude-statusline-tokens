@@ -2,10 +2,10 @@
 
 # claude-statusline-tokens
 
-**A Claude Code status line for Windows that shows real numbers — percentage used, token count, and dollar cost — for your 5-hour and 7-day rate-limit windows AND your current work session, with multi-account awareness.**
+**A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows AND your current work session, with multi-account awareness.**
 
 ```
-my-project | main | Opus 4.7 | 5h 42% (1.2M, $4.50) | 7d 17% (4.8M, $18.20) | session 850k ($3.40) | ctx 23k
+my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | session 850k ($3.40) | ctx 23k (2%)
 ```
 
 [Install](#install) · [How it works](docs/ARCHITECTURE.md) · [Pricing math](docs/PRICING.md) · [Multi-account](docs/MULTI-ACCOUNT.md) · [Customize](docs/CUSTOMIZE.md) · [Contributing](CONTRIBUTING.md)
@@ -29,6 +29,9 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 
 - **Color-coded headroom** — the 5h and 7d percentages tint **green** (< 50%), **yellow** (50–79%), **red** (≥ 80%) so a glance tells you where you stand. Tweak the bands with `STATUSLINE_PCT_THRESHOLDS=warn,crit` (e.g. `STATUSLINE_PCT_THRESHOLDS=65,85`)
 - **Percentage + tokens + $ in one line** for both the 5h block and the 7d weekly limit
+- **Reset countdown** on both windows — `resets 2h14m @ 12:38pm` — so you know whether to push on or take a break. Immune to DST, and it survives renders where Claude Code omits the field
+- **Context fill %** from `context_window.used_percentage` — a raw `ctx 63.0k` reads like a third of a 200k window but is 6% of a 1M one, so the percentage is the only signal that means the same thing on every model
+- **Verify the numbers yourself** with [`scripts/verify-tokens.ps1`](scripts/verify-tokens.ps1) — an independent re-derivation that cross-checks the status line's own arithmetic
 - **Session-based "current burst" indicator** that captures continuous activity regardless of clock-midnight or account switches — see [`docs/SESSION.md`](docs/SESSION.md)
 - **Multi-account aware** — the 5h / 7d numbers track the account you're currently signed into; the session segment is account-independent. Account switches are detected automatically via `~/.claude.json`'s `oauthAccount.organizationUuid`. See [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md)
 - **Per-turn pricing** that respects whichever model that turn used — mixing Opus and Haiku in a session yields a correctly blended cost, not an Opus-rated overcharge
@@ -318,7 +321,7 @@ Then edit `~/.claude/settings.json` and remove the `statusLine` block.
 | **5h % + tokens + $ + reset** | native `rate_limits.five_hour` for the % and reset time; transcript scan for tokens and cost | cyan, % shifts green/yellow/red | **current account** |
 | **7d % + tokens + $ + reset** | native `rate_limits.seven_day` for the % and reset time; transcript scan for tokens and cost | green, % shifts green/yellow/red | **current account** |
 | **session tokens + $** | contiguous activity, walking back until a 30-minute gap | gold | **every account in the burst** |
-| ctx | sum of `input + cache` tokens from the last assistant turn of the current session | blue | — |
+| ctx | tokens in the live context, plus fill % from `context_window.used_percentage` when the hook supplies it | blue | — |
 
 If `rate_limits` is missing for a given turn (typical at session start, before Claude Code has issued its first response), the percentage renders as `--%`. Token totals and costs always render.
 

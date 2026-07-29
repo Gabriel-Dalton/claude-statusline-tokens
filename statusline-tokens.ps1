@@ -265,6 +265,18 @@ $pct5hRaw    = Get-HookField $hook 'rate_limits.five_hour.used_percentage' -Fall
 $pct7dRaw    = Get-HookField $hook 'rate_limits.seven_day.used_percentage' -Fallback $null
 $resets5hRaw = Get-HookField $hook 'rate_limits.five_hour.resets_at'       -Fallback $null
 $resets7dRaw = Get-HookField $hook 'rate_limits.seven_day.resets_at'       -Fallback $null
+# Context fill percentage, straight from the hook (M4-02).
+#
+# The token count alone can't tell you how full the window is, because it says
+# nothing about the window's size: 63k reads like a third of a 200k model but
+# is 6% of a 1M one. Claude Code computes this against the actual window, so it
+# is the only correct signal — the token count stays as the fallback for
+# clients too old to send it.
+#
+# -NoLog because absence is normal, not a regression: the field is null early
+# in a session and immediately after /compact. Logging it would fire on every
+# render once the debug log (#17) is wired up.
+$ctxPctRaw = Get-HookField $hook 'context_window.used_percentage' -Fallback $null -NoLog
 # Normalized to UTC [DateTime] once, here, so every consumer downstream
 # (render, cache write) works with one shape instead of re-parsing.
 $reset5hUtc  = ConvertTo-ResetUtc $resets5hRaw
@@ -280,6 +292,7 @@ $hookFields = [pscustomobject]@{
     pct7d               = $pct7dRaw
     resets5h            = $reset5hUtc
     resets7d            = $reset7dUtc
+    ctxPct              = $ctxPctRaw
 }
 
 function Fmt-Tokens([long]$n) {
@@ -1173,7 +1186,16 @@ $p7Tinted = "$pct7Color$p7$reset$fg7d"
 $parts += (Color $fg5h      ("5h {0} ({1})" -f $p5Tinted, $body5h))
 $parts += (Color $fg7d      ("7d {0} ({1})" -f $p7Tinted, $body7d))
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
-$parts += (Color $fgCtx     ("ctx {0}"               -f       (Fmt-Tokens $ctxTokens)))
+# "ctx 63.0k (6%)" when the hook supplies the fill percentage, "ctx 63.0k"
+# when it doesn't. Explicit $null test, not truthiness: a genuine 0% is
+# falsy in PowerShell, and [double]$null silently coerces to 0 — either
+# would render "(0%)" for "unknown" and "" for a genuinely empty window.
+$ctxText = 'ctx {0}' -f (Fmt-Tokens $ctxTokens)
+if ($null -ne $hookFields.ctxPct) {
+    $ctxText = '{0} ({1}%)' -f $ctxText,
+        [int][math]::Round([double]$hookFields.ctxPct, 0, [MidpointRounding]::AwayFromZero)
+}
+$parts += (Color $fgCtx $ctxText)
 
 $sep = " $fgDim|$reset "
 [Console]::Out.Write([string]::Join($sep, $parts))

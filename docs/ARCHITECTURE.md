@@ -1,6 +1,6 @@
 # Architecture — how the script works internally
 
-A compact explainer for contributors and anyone curious about the implementation choices. The script is ~240 lines of PowerShell; this doc maps the moving parts.
+A compact explainer for contributors and anyone curious about the implementation choices. The script is a single ~1,180-line PowerShell file; this doc maps the moving parts.
 
 ## The big picture
 
@@ -204,13 +204,29 @@ The "latest turn within `$sessionGapMinutes` of now" gate is what makes the sess
 
 ```powershell
 @{
+  schemaVersion = $cacheSchemaVersion   # bumped when this shape changes;
+                                        # an older cache is discarded, not misread
   computedAtUtc = $nowUtc.ToString('o')
+  orgKey        = $currentOrgKey        # organizationUuid — a cache written under
+                                        # a different account is not reused
   tok5h         = $tok5h
   tok7d         = $tok7d
   cost5h        = $cost5h
   cost7d        = $cost7d
-} | ConvertTo-Json -Compress | Set-Content -Path $cachePath -Encoding utf8
+  pct5h         = $pct5h                # authoritative percentages from the hook,
+  pct7d         = $pct7d                # persisted for claude-dashboard.ps1
+  pctSavedAtUtc = $nowUtc.ToString('o')
+  resets5h      = $reset5hUtc.ToString('o')   # ISO-8601, so the value round-trips
+  resets7d      = $reset7dUtc.ToString('o')   # unambiguously (the hook sends epoch)
+  transcripts   = $transcriptStateOut   # per-file tail offsets, so the next scan
+                                        # resumes instead of re-reading from byte 0
+} | ConvertTo-Json -Compress -Depth 6
 ```
+
+`tokSession` / `costSession` are deliberately **not** cached: the session window
+can flip from active to ended the moment the 30-minute idle threshold passes, so
+it is recomputed every render from the per-file tail cache rather than lagging by
+up to a full TTL.
 
 Why 20 seconds? Two competing concerns:
 
