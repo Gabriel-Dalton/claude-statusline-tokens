@@ -190,6 +190,8 @@ if ((-not $Today) -and $Hours -eq 5 -and (Test-Path $cachePath)) {
             Write-Host '  A small delta is expected - the status line caches for 20s and the'
             Write-Host '  window keeps moving while this script runs.'
         }
-    } catch { }
+    } catch {
+        Write-Verbose "status-line cache unreadable; skipping cross-check: $_"
+    }
 }
 Write-Host ''

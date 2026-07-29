@@ -110,7 +110,7 @@ foreach ($s in $segs) {
 $fFoot = New-Object System.Drawing.Font('Consolas', 15)
 $g.DrawString('github.com/Gabriel-Dalton/claude-statusline-tokens', $fFoot, (Brush '#737373'), 74, 552)
 # Right-align via a layout rectangle. Measuring the string and subtracting is
-# fragile once the text contains a middle dot — the measured width came back
+# fragile once the text contains a middle dot - the measured width came back
 # wider than the card and pushed the badge off the left edge.
 $fFootR = New-Object System.Drawing.Font('Segoe UI', 15)
 $fmtRight = New-Object System.Drawing.StringFormat
@@ -118,7 +118,7 @@ $fmtRight.Alignment = [System.Drawing.StringAlignment]::Far
 $fmtRight.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
 $footRect = New-Object System.Drawing.RectangleF(600, 552, ($W - 74 - 600), 28)
 # Middle dot built at runtime: PS 5.1 reads a .ps1 without a BOM using the
-# system ANSI codepage, so a literal U+00B7 in the source renders as "Â·".
+# system ANSI codepage, so a literal U+00B7 in the source renders as mojibake.
 $dot = [string][char]0x00B7
 $g.DrawString("MIT  $dot  PowerShell  $dot  no dependencies", $fFootR, (Brush '#525252'), $footRect, $fmtRight)
 

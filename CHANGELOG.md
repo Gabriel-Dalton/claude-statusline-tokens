@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] - 2026-07-29
+
 ### Added
 
 - **`scripts/verify-tokens.ps1` — independently re-derives the token totals.** "It says I used 168 million tokens today" is the most common reaction to this status line, and the honest answer needed evidence rather than a hand-wave. The verifier deliberately shares no code with the status line: that one extracts fields with regex for speed, this one does a full `ConvertFrom-Json` parse of every transcript line. Two independent implementations landing on the same total means the number isn't an artifact of the parsing strategy — on the reference run they agreed to 0.00%. It also breaks the total into the four billing categories (a measured session was 97.7% cache read, 2.3% genuinely new work), prints the confirming `turns × average context = cache-read total` arithmetic, and reports the pre-dedupe line count so the de-duplication can be seen working rather than trusted.
