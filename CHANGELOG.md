@@ -6,7 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/verify-tokens.ps1` — independently re-derives the token totals.** "It says I used 168 million tokens today" is the most common reaction to this status line, and the honest answer needed evidence rather than a hand-wave. The verifier deliberately shares no code with the status line: that one extracts fields with regex for speed, this one does a full `ConvertFrom-Json` parse of every transcript line. Two independent implementations landing on the same total means the number isn't an artifact of the parsing strategy — on the reference run they agreed to 0.00%. It also breaks the total into the four billing categories (a measured session was 97.7% cache read, 2.3% genuinely new work), prints the confirming `turns × average context = cache-read total` arithmetic, and reports the pre-dedupe line count so the de-duplication can be seen working rather than trusted.
+- **FAQ section on the landing page**, with matching `FAQPage` structured data — leading with why the token number looks impossibly large, since that's the question that costs the project trust.
+- **`robots.txt`, `sitemap.xml` and `llms.txt`.** The last is a plain-text summary aimed at answer engines, covering the token-accounting explanation and the full pricing table.
+- **`scripts/make-og-card.ps1`** generates the 1200×630 social card, so the card can be regenerated whenever the sample status line changes instead of drifting out of date.
+
 ### Fixed
+
+- **Social previews produced no image at all.** `og:image` pointed at a relative path (`./docs/img/statusline.png`); crawlers don't resolve those, so Twitter, LinkedIn, Slack and Discord had nothing to render. Now an absolute URL to a purpose-built 1200×630 card — the previous image was a 940×106 strip at a 24:1 ratio, which no social crop handles.
+- **Landing page showed pre-price-drop figures.** Every sample dollar amount was computed at the old $15/$75 Opus rate and was therefore ~3× too high; the model was shown as Opus 4.7, and the `session` segment was missing from both the sample line and the segment table ("six segments" when the bar renders seven). Samples now show the reset countdown too.
+- Page-level SEO gaps: no canonical URL, no `og:url` / `og:type` / `og:site_name`, no Twitter title/description/image, no structured data. Google Fonts loaded render-blocking from a third-party origin, which shows up directly in Largest Contentful Paint; now loaded non-blockingly with a `<noscript>` fallback.
 
 - **The reset countdown never rendered.** `Fmt-Reset` parsed `resets_at` with `[DateTime]::Parse`, but Claude Code sends it as a **Unix epoch integer** — the parse threw, the `catch` swallowed it, and the segment was silently omitted on every render. Because the failure was indistinguishable from "the hook didn't send the field", it survived an earlier debugging pass. Timestamps now go through a `ConvertTo-ResetUtc` normalizer that accepts epoch seconds, epoch milliseconds, ISO-8601 with or without an offset, and a live `[DateTime]`.
 - **Opus was billed at 3× its actual rate.** `$prices.opus` carried $15/$75 per MTok, the pre-Opus-4.5 rate. Opus 4.5 and everything after it (4.6, 4.7, 4.8, Opus 5) is $5/$25, so every cost figure for current traffic was roughly tripled. Split into `opus` ($5/$25) and `opusLegacy` ($15/$75, for Opus 4.1 / 4.0 / Opus 3), matched by model ID so a transcript spanning both eras still totals correctly.

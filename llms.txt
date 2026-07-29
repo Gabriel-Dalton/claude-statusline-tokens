@@ -1,0 +1,70 @@
+# statusline-tokens
+
+> A Claude Code status line for Windows that adds raw token totals, API-equivalent dollar cost, and rate-limit reset countdowns to the 5-hour and 7-day usage windows. One PowerShell file, no dependencies, MIT licensed.
+
+Claude Code ships a status line that reports rate-limit **percentages** but no token counts and no cost. This project fills that gap by reading the transcript files Claude Code already writes to `~/.claude/projects/**/*.jsonl` and summing the `usage` block on every assistant turn.
+
+Repository: https://github.com/Gabriel-Dalton/claude-statusline-tokens
+Site: https://claude-statusline-tokens.vercel.app/
+License: MIT
+
+## What it renders
+
+```
+my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am) | session 8.2M ($6.18) | ctx 63.0k
+```
+
+Seven segments: working directory, git branch, model, 5-hour window, 7-day window, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
+
+## Key facts
+
+- **Platform:** Windows. PowerShell 5.1 or later. No Node, no npm, no dependencies.
+- **Network:** none. It reads local files and writes one local JSON cache. It makes no outbound requests.
+- **Install:** clone the repo and run `setup.ps1`, which copies the script into `~/.claude/` and merges the `statusLine` block into `~/.claude/settings.json`.
+- **Companion:** `claude-dashboard.ps1` renders a full-screen live view with progress bars, a per-project table, a per-model breakdown and a 24-hour sparkline.
+
+## Why the token number looks impossibly large
+
+The most common reaction is "it says I used 168 million tokens today, that can't be right."
+
+It is right, and roughly **97% of it is cache reads**. Every turn re-sends the entire conversation to the model; those replayed tokens are billed and counted each time.
+
+Measured over one real 5-hour session:
+
+| Category | Tokens | Share |
+|---|---|---|
+| cache read (conversation replayed each turn) | 164.4M | 97.7% |
+| cache write | 3.0M | 1.8% |
+| output (words the model generated) | 778.0k | 0.5% |
+| input (fresh text sent) | 1.8k | 0.0% |
+| **total** | **168.2M** | 100% |
+
+Genuinely new work was 3.8M tokens (2.3%). The confirming arithmetic: 827 assistant turns x 198.8k average context re-read = 164.4M, which matches the measured cache-read total exactly.
+
+`scripts/verify-tokens.ps1` reproduces this breakdown on any machine, using a full JSON parse rather than the status line's regex path, so the two implementations independently cross-check each other.
+
+## Pricing model
+
+Cost is API-equivalent, not a bill. Subscribers on Claude Pro / Max / Team / Enterprise pay a flat fee regardless. Rates per million tokens:
+
+| Family | input | output | cache read | cache write 5m | cache write 1h |
+|---|---|---|---|---|---|
+| Fable 5, Mythos 5 | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
+| Opus 5, 4.8, 4.7, 4.6, 4.5 | $5.00 | $25.00 | $0.50 | $6.25 | $10.00 |
+| Opus 4.1, 4.0, Opus 3 | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
+| Sonnet 5, 4.x | $3.00 | $15.00 | $0.30 | $3.75 | $6.00 |
+| Haiku 4.x | $1.00 | $5.00 | $0.10 | $1.25 | $2.00 |
+
+Each turn is priced with the model recorded on that turn, so mixed-model sessions blend correctly. Cache read is 0.1x input, 5-minute cache write is 1.25x, 1-hour cache write is 2x.
+
+## Rate-limit resets
+
+Claude Code passes `rate_limits.five_hour.resets_at` and `rate_limits.seven_day.resets_at` to the status-line hook as a Unix epoch. The script renders each as a countdown plus local clock time, e.g. `resets 2h14m @ 12:38pm`. Timestamps are held in UTC internally and converted to local time only at render, so the countdown is unaffected by daylight saving transitions.
+
+## Documentation
+
+- README: https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/README.md
+- Pricing detail: https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/docs/PRICING.md
+- Architecture: https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/docs/ARCHITECTURE.md
+- Customizing: https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/docs/CUSTOMIZE.md
+- Multi-account behaviour: https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/docs/MULTI-ACCOUNT.md

@@ -355,7 +355,36 @@ Pricing uses Anthropic's published per-million-token rates, embedded in the scri
 
 > ⚠️ **This is API-equivalent cost, not your bill.** If you're on Claude Pro / Max / Team / Enterprise, you pay a flat monthly fee regardless of what the status line says. The dollar amount is "what an API customer would have paid to do the same work" — a useful intensity signal, not an invoice.
 >
-> Heavy Claude Code sessions look expensive because **96%+ of your tokens are usually cache reads** — at current Opus rates, $0.50/M. Anthropic re-bills the same conversation context on every turn, so your dollar figure is mostly those replays, not new work. The actual *fresh* tokens (input + output + cache writes) are a fraction of the total: a ~$120 5h window is typically ~5M new tokens against ~140M of cache replay.
+> Heavy Claude Code sessions look expensive because **~97% of your tokens are cache reads** — at current Opus rates, $0.50/M. Anthropic re-bills the same conversation context on every turn, so your dollar figure is mostly those replays, not new work.
+
+### "It says I used 168 million tokens today." Is that real?
+
+Yes — and it's the first thing everyone asks, so here is a real measurement rather than a hand-wave. One 5-hour session, broken down by billing category:
+
+| Category | Tokens | Share |
+|---|---:|---:|
+| cache read — the conversation replayed each turn | 164.4M | 97.7% |
+| cache write | 3.0M | 1.8% |
+| output — words the model actually generated | 778.0k | 0.5% |
+| input — fresh text sent | 1.8k | 0.0% |
+| **total** | **168.2M** | **100%** |
+
+Genuinely new work was **3.8M tokens (2.3%)**. The rest is the same conversation being re-read. The arithmetic that confirms it:
+
+```
+827 assistant turns × 198.8k average context re-read = 164.4M
+measured cache read                                  = 164.4M
+```
+
+**Verify it on your own machine:**
+
+```powershell
+.\scripts\verify-tokens.ps1           # last 5 hours
+.\scripts\verify-tokens.ps1 -Today    # since local midnight
+.\scripts\verify-tokens.ps1 -Hours 24
+```
+
+That script deliberately does **not** share code with the status line. The status line extracts fields with regex for speed; the verifier does a full `ConvertFrom-Json` parse of every line. Two independent implementations landing on the same total means the number isn't an artifact of how it was parsed — on the run above they agreed to **0.00%**. The script also prints the pre-dedupe line count (raw log lines are ~2.3× the turn count, because one turn is logged once per content block and each copy repeats the same `usage` object), so you can see the de-duplication is doing its job rather than trusting it.
 
 Full pricing logic, model-family mapping, and FAQs live in **[`docs/PRICING.md`](docs/PRICING.md)**.
 

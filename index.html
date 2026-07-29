@@ -3,16 +3,138 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>statusline-tokens — token & cost readout for Claude Code</title>
-<meta name="description" content="A Claude Code status line for Windows that adds raw token counts and dollar cost to the 5-hour and 7-day rate-limit windows. One PowerShell script, no dependencies.">
-<meta property="og:title" content="statusline-tokens — token & cost readout for Claude Code">
-<meta property="og:description" content="Adds raw token totals and dollar cost underneath Claude Code's rate-limit percentages. One file, no dependencies.">
-<meta property="og:image" content="./docs/img/statusline.png">
+<title>Claude Code Status Line - Token Usage &amp; Cost | statusline-tokens</title>
+<meta name="description" content="Adds token totals, API-rate cost and reset countdowns to Claude Code's 5-hour and 7-day rate-limit windows. One PowerShell file for Windows, no dependencies.">
+<link rel="canonical" href="https://claude-statusline-tokens.vercel.app/">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="author" content="Gabriel Dalton">
+<meta name="theme-color" content="#0a0a0a">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="statusline-tokens">
+<meta property="og:url" content="https://claude-statusline-tokens.vercel.app/">
+<meta property="og:title" content="Claude Code status line with token counts and cost">
+<meta property="og:description" content="Token totals, API-rate cost and reset countdowns on the 5h + 7d limits. One PowerShell file, no dependencies.">
+<!-- Absolute URL is mandatory: crawlers do not resolve relative og:image paths,
+     so the previous "./docs/img/..." value produced no preview at all. 1200x630
+     is the ratio Twitter/LinkedIn/Slack crop to. -->
+<meta property="og:image" content="https://claude-statusline-tokens.vercel.app/docs/img/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="statusline-tokens: a Claude Code status line showing 5-hour and 7-day token totals, dollar cost and a reset countdown.">
+
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Claude Code status line with token counts and cost">
+<meta name="twitter:description" content="Token totals, API-rate cost and reset countdowns on the 5h + 7d limits. One PowerShell file, no dependencies.">
+<meta name="twitter:image" content="https://claude-statusline-tokens.vercel.app/docs/img/og-card.png">
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="%230a0a0a"/><text x="16" y="22" font-family="ui-monospace,monospace" font-size="20" font-weight="600" fill="%23f59e0b" text-anchor="middle">›</text></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Loaded non-blockingly: as a plain stylesheet this is a render-blocking
+     request to a third-party origin, which shows up directly in Largest
+     Contentful Paint. The print-media swap lets the page paint in the system
+     font stack first, then upgrade. -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+</noscript>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://claude-statusline-tokens.vercel.app/#software",
+      "name": "statusline-tokens",
+      "alternateName": "claude-statusline-tokens",
+      "description": "A Claude Code status line for Windows that adds raw token totals, API-rate cost and rate-limit reset countdowns to the 5-hour and 7-day usage windows.",
+      "url": "https://claude-statusline-tokens.vercel.app/",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Command line tool",
+      "operatingSystem": "Windows 10, Windows 11",
+      "softwareRequirements": "PowerShell 5.1 or later; Claude Code",
+      "programmingLanguage": "PowerShell",
+      "codeRepository": "https://github.com/Gabriel-Dalton/claude-statusline-tokens",
+      "license": "https://opensource.org/licenses/MIT",
+      "image": "https://claude-statusline-tokens.vercel.app/docs/img/og-card.png",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "Gabriel Dalton" },
+      "featureList": [
+        "Token totals for the 5-hour and 7-day rate-limit windows",
+        "API-equivalent dollar cost, priced per turn per model",
+        "Countdown to when each rate-limit window resets",
+        "Percentage colour-shifts green to yellow to red as headroom disappears",
+        "Current session and context-window size",
+        "Per-account attribution across account switches"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://claude-statusline-tokens.vercel.app/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How do I see token usage in Claude Code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Claude Code's own status line reports rate-limit percentages but not raw token counts. statusline-tokens reads the transcript files Claude Code already writes to ~/.claude/projects/ and sums the usage block on every assistant turn, so the status line shows token totals for the 5-hour and 7-day windows alongside the percentage."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does Claude Code say I used over 100 million tokens in one day?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Because roughly 97% of that figure is cache reads. Every turn re-sends the whole conversation to the model, and those replayed tokens are billed and counted each time. In a measured 5-hour session of 827 turns with a 130k median context, 164.4M of the 168.2M total was re-read context and only 3.8M was genuinely new work. The number is real, but it is the same conversation being read repeatedly rather than new material."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the dollar figure my actual Claude bill?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It is what the same work would have cost at Anthropic's published API rates. On a Claude Pro, Max, Team or Enterprise plan you pay a flat subscription no matter what the status line says. Treat the dollar figure as an intensity signal, not an invoice."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "When does the Claude Code 5-hour limit reset?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Claude Code sends the reset timestamp to the status line hook as a Unix epoch. statusline-tokens renders it as a countdown plus a local clock time, for example 'resets 2h14m @ 12:38pm', on both the 5-hour and 7-day windows."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which Claude models does the cost calculation cover?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Claude Fable 5 and Mythos 5 at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session that mixes models still totals correctly."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does statusline-tokens work on macOS or Linux?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It is written in PowerShell and targets Windows. PowerShell 7 runs on macOS and Linux, and the transcript format is identical there, but the paths and install flow are Windows-first and macOS/Linux are not currently tested."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it send my data anywhere?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It makes no network calls. It reads transcript files that already exist on disk and writes one small JSON cache next to them. It is a single PowerShell file you can read end to end, MIT licensed."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 <style>
 :root {
   --bg:           #ffffff;
@@ -360,6 +482,7 @@ h1.headline .accent { color: var(--accent); }
 .statusline .seg-mod   { color: #af87ff; } /* ANSI 141 */
 .statusline .seg-5h    { color: #5fd7ff; } /* ANSI 81  */
 .statusline .seg-7d    { color: #87af87; } /* ANSI 108 */
+.statusline .seg-ses   { color: #d7af00; } /* ANSI 178 */
 .statusline .seg-ctx   { color: #87afd7; } /* ANSI 110 */
 .statusline .seg-sep   { color: #8a8a8a; padding: 0 6px; } /* ANSI 245 */
 
@@ -951,6 +1074,20 @@ h1.headline .accent { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* FAQ ------------------------------------------------------------------- */
+.faq-grid { display: grid; gap: 0; margin-top: 8px; }
+.faq-item { border-top: 1px solid var(--border); padding: 26px 0; }
+.faq-item:last-child { border-bottom: 1px solid var(--border); }
+.faq-q {
+  font-size: 17px; font-weight: 600; color: var(--fg);
+  margin: 0 0 10px; letter-spacing: -0.01em;
+}
+.faq-a { margin: 0; color: var(--fg-muted); font-size: 15.5px; line-height: 1.65; max-width: 74ch; }
+.faq-a code { font-family: var(--mono); font-size: 13.5px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+.faq-a + .faq-a { margin-top: 10px; }
+@media (max-width: 640px) { .faq-q { font-size: 16px; } .faq-a { font-size: 15px; } }
 </style>
 </head>
 <body>
@@ -969,6 +1106,7 @@ h1.headline .accent { color: var(--accent); }
       <a href="#anatomy">Anatomy</a>
       <a href="#install">Install</a>
       <a href="#methodology">Methodology</a>
+      <a href="#faq">FAQ</a>
       <a class="gh" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.49-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.5-1.08-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.52-1.03 2.19-.82 2.19-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
@@ -1012,7 +1150,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="term-body">
         <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
         <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 4.7 (1M context)</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (103.8M tok, $300)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (149.7M tok, $456)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
         </div>
       </div>
     </figure>
@@ -1126,7 +1264,7 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-g">green</span> &lt; 50%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in green at 24 percent.">
-            <span class="seg-5h">5h <span class="pct-green">24%</span> (24.6M tok, $72)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">9%</span> (54.2M tok, $164)</span>
+            <span class="seg-5h">5h <span class="pct-green">24%</span> (41.2M tok, $31.06)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">9%</span> (98.4M tok, $74.19)</span>
           </div>
         </div>
         <p class="headroom-blurb">Comfortable. Plenty of room left in both windows.</p>
@@ -1136,7 +1274,7 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-y">yellow</span> 50&ndash;79%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in yellow at 68 percent.">
-            <span class="seg-5h">5h <span class="pct-yellow">68%</span> (72.8M tok, $209)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-yellow">52%</span> (310.4M tok, $912)</span>
+            <span class="seg-5h">5h <span class="pct-yellow">68%</span> (118.9M tok, $89.65)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-yellow">52%</span> (287.3M tok, $217)</span>
           </div>
         </div>
         <p class="headroom-blurb">Pacing matters. Time to wrap up the long-running task before the reset.</p>
@@ -1146,7 +1284,7 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-r">red</span> &ge; 80%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in red at 97 percent.">
-            <span class="seg-5h">5h <span class="pct-red">97%</span> (103.8M tok, $300)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-red">88%</span> (528.1M tok, $1.5k)</span>
+            <span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-red">88%</span> (486.5M tok, $367)</span>
           </div>
         </div>
         <p class="headroom-blurb">Near the limit. A throttle could land mid-turn &mdash; finish or switch accounts.</p>
@@ -1164,7 +1302,7 @@ h1.headline .accent { color: var(--accent); }
   <div class="shell">
     <div class="section-head">
       <div class="section-eyebrow">Anatomy</div>
-      <h2 class="section-title">Six segments, six signals.</h2>
+      <h2 class="section-title">Seven segments, seven signals.</h2>
       <p class="section-kicker">
         Each segment uses a different ANSI 256-color index so it reads like a dashboard.
       </p>
@@ -1173,7 +1311,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Close-up of the status line showing six colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, and current context.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 4.7 (1M context)</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (103.8M tok, $300)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (149.7M tok, $456)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k</span>
         </div>
       </div>
     </figure>
@@ -1202,21 +1340,27 @@ h1.headline .accent { color: var(--accent); }
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #7c3aed;"><span class="swatch" style="background: #a78bfa;"></span>model</td>
-          <td data-col="Sample" class="sample">Opus 4.7 (1M context)</td>
+          <td data-col="Sample" class="sample">Opus 5</td>
           <td data-col="Derivation" class="source"><code>model.display_name</code> from hook</td>
           <td data-col="ANSI" class="source">141</td>
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #0891b2;"><span class="swatch" style="background: #22d3ee;"></span>5h window</td>
-          <td data-col="Sample" class="sample">97% (103.8M tok, $300)</td>
-          <td data-col="Derivation" class="source"><code>rate_limits.five_hour</code> + transcript scan, API-rate cost</td>
+          <td data-col="Sample" class="sample">97% (168.2M tok, $127, resets 12m @ 1:50pm)</td>
+          <td data-col="Derivation" class="source"><code>rate_limits.five_hour</code> for % and reset; transcript scan for tokens and cost</td>
           <td data-col="ANSI" class="source">81</td>
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #16a34a;"><span class="swatch" style="background: #4ade80;"></span>7d window</td>
-          <td data-col="Sample" class="sample">25% (149.7M tok, $456)</td>
-          <td data-col="Derivation" class="source"><code>rate_limits.seven_day</code> + transcript scan, API-rate cost</td>
+          <td data-col="Sample" class="sample">25% (412.6M tok, $311, resets 4d6h @ Sun 6am)</td>
+          <td data-col="Derivation" class="source"><code>rate_limits.seven_day</code> for % and reset; transcript scan for tokens and cost</td>
           <td data-col="ANSI" class="source">108</td>
+        </tr>
+        <tr>
+          <td data-col="Segment" class="seg" style="color: #a16207;"><span class="swatch" style="background: #d7af00;"></span>session</td>
+          <td data-col="Sample" class="sample">8.2M ($6.18)</td>
+          <td data-col="Derivation" class="source">contiguous activity, walking back until a 30-minute gap</td>
+          <td data-col="ANSI" class="source">178</td>
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #2563eb;"><span class="swatch" style="background: #60a5fa;"></span>context</td>
@@ -1358,6 +1502,58 @@ h1.headline .accent { color: var(--accent); }
         <div class="note">
           Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A 20-second JSON cache keeps the bar snappy on every re-render.
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────── FAQ -->
+<section class="section" id="faq">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-eyebrow">Questions</div>
+      <h2 class="section-title">The ones everybody asks.</h2>
+      <p class="section-kicker">
+        Mostly about that alarming number in the middle of the bar.
+      </p>
+    </div>
+
+    <div class="faq-grid">
+      <div class="faq-item">
+        <h3 class="faq-q">How do I see token usage in Claude Code?</h3>
+        <p class="faq-a">Claude Code's own status line reports rate-limit percentages but not raw token counts. <strong>statusline-tokens</strong> reads the transcript files Claude Code already writes to <code>~/.claude/projects/</code> and sums the <code>usage</code> block on every assistant turn, so the bar shows token totals for the 5-hour and 7-day windows next to the percentage.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">Why does it say I used over 100 million tokens in one day?</h3>
+        <p class="faq-a">Because roughly <strong>97% of that number is cache reads</strong>. Every turn re-sends the entire conversation to the model, and those replayed tokens are billed and counted each time.</p>
+        <p class="faq-a">A real measurement from a 5-hour session: <strong>168.2M tokens total</strong> across 827 assistant turns, of which <strong>164.4M was re-read context</strong> and only <strong>3.8M was genuinely new work</strong> — the words the model actually wrote plus what was newly sent. The arithmetic that confirms it is <code>827 turns &times; 198.8k average context = 164.4M</code>.</p>
+        <p class="faq-a">The number is real. It is just the same conversation being read over and over, not 168 million tokens of new material. Run <code>scripts/verify-tokens.ps1</code> to reproduce that breakdown on your own transcripts.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">Is the dollar figure my actual Claude bill?</h3>
+        <p class="faq-a">No. It is what the same work would have cost at Anthropic's published <strong>API</strong> rates. On a Claude Pro, Max, Team or Enterprise plan you pay a flat subscription no matter what the bar says. Read it as an intensity signal, not an invoice.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">When does the Claude Code 5-hour limit reset?</h3>
+        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time — <code>resets 2h14m @ 12:38pm</code> — on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">Which models does the pricing cover?</h3>
+        <p class="faq-a">Claude Fable 5 and Mythos 5 at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session mixing models still totals correctly.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">Does it work on macOS or Linux?</h3>
+        <p class="faq-a">It is PowerShell and targets Windows. PowerShell 7 runs on macOS and Linux and the transcript format is identical there, but the paths and the install flow are Windows-first and the other platforms are not currently tested.</p>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-q">Does it send my data anywhere?</h3>
+        <p class="faq-a">No. It makes no network calls at all. It reads transcript files that already exist on your disk and writes one small JSON cache beside them. It is a single PowerShell file you can read end to end, MIT licensed.</p>
       </div>
     </div>
   </div>
