@@ -54,6 +54,22 @@ function Get-ModelFamily([string]$id) {
     if ($id -match 'haiku')  { return 'haiku' }
     return 'opus'
 }
+# ---------------------------------------------------------------------------
+# Loop watch thresholds (#41). Override with
+#   STATUSLINE_LOOP_WATCH=window,maxDistinct,tokenFloor
+# e.g. "20,4,2000000" to require a longer, more varied, more expensive stretch
+# before it counts. Defaults are calibrated against 18 real sessions in which
+# healthy work never dropped below 8 distinct calls per 10-call window.
+# ---------------------------------------------------------------------------
+$script:loopWindow      = 10
+$script:loopMaxDistinct = 3
+$script:loopTokenFloor  = 1000000
+if ($env:STATUSLINE_LOOP_WATCH -match '^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$') {
+    $script:loopWindow      = [int]$Matches[1]
+    $script:loopMaxDistinct = [int]$Matches[2]
+    $script:loopTokenFloor  = [long]$Matches[3]
+}
+
 # Pricing family vs display family: legacy Opus is billed at its own rate but
 # shown on the 'opus' row, so the breakdown stays one line per model name.
 function Get-DisplayFamily([string]$family) {
@@ -384,12 +400,17 @@ function Invoke-Scan {
     $latestContextTime = [DateTime]::MinValue
     $totalTurns = 0
     $seen = @{}
+    # Loop watch (#41): message id -> the tool calls that turn issued, and
+    # message id -> that turn's ticks/tokens/cost. Both scoped to the 5h window.
+    $toolCallsByTurn = @{}
+    $turnCostByTurn  = @{}
 
     if (-not (Test-Path $projectsDir)) {
         return [pscustomobject]@{
             tok5h = 0; cost5h = 0; tok7d = 0; cost7d = 0
             oldest5h = $null; oldest7d = $null
             modelTokens = $modelTokens; modelCost = $modelCost
+            loop = $null
             projectTokens = $projectTokens; projectCost = $projectCost
             sparkBuckets = $sparkBuckets
             tokSession = 0; costSession = 0; sessionStart = $null; sessionTurns = 0
@@ -444,6 +465,47 @@ function Invoke-Scan {
                 # Same-message dedup: a single assistant turn is logged once
                 # per content block, and every block carries the same usage.
                 $mId = $rxMsgId.Match($line)
+
+                # --- loop watch: harvest tool calls (#41) --------------------
+                # This MUST run before the dedupe below. Dedupe keeps only the
+                # first logged block of a turn, which is frequently a thinking
+                # block - by the time it has run, the tool_use lines for that
+                # turn are already discarded.
+                #
+                # Only lines containing "tool_use" get a real JSON parse: about
+                # a hundred lines out of many thousands, so the cost is bounded
+                # and the dashboard refreshes on a timer rather than per
+                # keystroke. Regex is not an option here - the input object
+                # needs balanced-brace matching, and hashing a fixed-length
+                # slice instead produces false matches between distinct calls
+                # that happen to share a prefix.
+                if ($mId.Success -and $t -gt $cut5h -and $line.IndexOf('"tool_use"') -ge 0) {
+                    try {
+                        $parsed = $line | ConvertFrom-Json -ErrorAction Stop
+                        $blocks = $parsed.message.content
+                        if ($blocks -is [System.Array]) {
+                            $msgKey = $mId.Groups[1].Value
+                            foreach ($b in $blocks) {
+                                if ($b.type -ne 'tool_use') { continue }
+                                $inputJson = ''
+                                if ($null -ne $b.input) {
+                                    $inputJson = $b.input | ConvertTo-Json -Compress -Depth 8
+                                }
+                                if (-not $toolCallsByTurn.ContainsKey($msgKey)) {
+                                    $toolCallsByTurn[$msgKey] =
+                                        New-Object System.Collections.ArrayList
+                                }
+                                [void]$toolCallsByTurn[$msgKey].Add(
+                                    ('{0}({1})' -f $b.name, $inputJson))
+                            }
+                        }
+                    } catch {
+                        # A malformed line costs us one turn's tool detail, not
+                        # the scan. Token accounting below is unaffected.
+                        Write-Verbose "loop watch: unparseable tool_use line skipped: $_"
+                    }
+                }
+
                 if ($mId.Success) {
                     $key = $mId.Groups[1].Value
                     if ($seen.ContainsKey($key)) { continue }
@@ -473,6 +535,14 @@ function Invoke-Scan {
                     $t5m     * $p.cacheW5m  +
                     $t1h     * $p.cacheW1h
                 ) / 1000000.0
+
+                # Loop watch needs cost at TURN granularity, keyed the same way
+                # the harvest above is, so a repetitive stretch can be priced.
+                if ($mId.Success -and $t -gt $cut5h) {
+                    $turnCostByTurn[$mId.Groups[1].Value] = @{
+                        ticks = $t.Ticks; sum = $sum; cost = $cost
+                    }
+                }
 
                 $turnAcct = Account-At $t $Checkpoints
                 $isCurrent = $true
@@ -581,11 +651,18 @@ function Invoke-Scan {
         }
     }
 
+    $loopWatch = Get-LoopWatch -ToolCallsByTurn $toolCallsByTurn `
+                               -TurnCostByTurn $turnCostByTurn `
+                               -Window $script:loopWindow `
+                               -MaxDistinct $script:loopMaxDistinct `
+                               -TokenFloor $script:loopTokenFloor
+
     [pscustomobject]@{
         tok5h = $tok5h; cost5h = $cost5h
         tok7d = $tok7d; cost7d = $cost7d
         oldest5h = $oldest5h; oldest7d = $oldest7d
         modelTokens = $modelTokens; modelCost = $modelCost
+        loop = $loopWatch
         projectTokens = $projectTokens; projectCost = $projectCost
         sparkBuckets = $sparkBuckets
         tokSession = $tokSession; costSession = $costSession
@@ -593,6 +670,142 @@ function Invoke-Scan {
         ctxTokens = $latestContext; ctxModel = $modelForContext
         totalTurns = $totalTurns; sessionsLastWeek = $sessionsLastWeek
         pct5h = -1.0; pct7d = -1.0   # filled by the caller from the statusline cache
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Loop watch (#41) - detect a repeating tool pattern that is burning tokens.
+#
+# Why not a cost-anomaly test: #30 proposed flagging turns more than 3 sigma
+# above the session mean. That measures "unusual" against a yardstick the
+# problem itself bends. A loop of identical cheap turns drags the mean toward
+# itself and collapses the variance, so it scores LOWER the longer it runs
+# (0.17 sigma at 5 turns, 0.07 at 80 in simulation) - and worse, it inverts:
+# past ~40 loop turns an ordinary turn scores 4.4 sigma and gets flagged as
+# the anomaly instead. Classic masking and swamping.
+#
+# Repetition has no such weakness. It is a structural property of the call
+# sequence, so there is no estimator to contaminate. Measured across 18 real
+# sessions / 1000 tool calls: healthy work never dropped below 8 distinct
+# calls in any 10-call window, and exact identical consecutive calls never
+# occurred at all. A threshold of 3 sits well clear of that.
+#
+# Repetition alone is not the alarm, though. A deliberate poll-until-ready
+# loop repeats too. The alarm is repetition PLUS accumulating spend: polling
+# stays cheap, while a runaway loop re-reads the whole context every turn and
+# crosses a token floor quickly. That is the synthesis of the two failure
+# shapes in the design critique on #30.
+# ---------------------------------------------------------------------------
+function Get-LoopWatch {
+    param(
+        [hashtable]$ToolCallsByTurn,
+        [hashtable]$TurnCostByTurn,
+        [int]$Window       = 10,
+        [int]$MaxDistinct  = 3,
+        [long]$TokenFloor  = 1000000
+    )
+
+    $quiet = [pscustomobject]@{
+        tripped = $false; distinct = $null; window = $Window
+        turns = 0; tokens = [long]0; cost = 0.0; span = [TimeSpan]::Zero
+        calls = @()
+    }
+
+    # One entry per turn that issued tool calls, in time order. The signature
+    # is the turn's whole fan-out, sorted: a turn that issues Read(a)+Read(b)
+    # repeatedly is as much a loop as one that issues Read(a) repeatedly.
+    $seq = New-Object System.Collections.ArrayList
+    foreach ($msgId in $ToolCallsByTurn.Keys) {
+        if (-not $TurnCostByTurn.ContainsKey($msgId)) { continue }
+        $meta = $TurnCostByTurn[$msgId]
+        $names = @($ToolCallsByTurn[$msgId]) | Sort-Object
+        [void]$seq.Add([pscustomobject]@{
+            ticks = [long]$meta.ticks
+            sum   = [long]$meta.sum
+            cost  = [double]$meta.cost
+            sig   = ($names -join '+')
+            calls = $names
+        })
+    }
+    if ($seq.Count -lt $Window) { return $quiet }
+    $ordered = @($seq | Sort-Object -Property ticks)
+
+    # Worst (least varied) window.
+    $bestStart = -1
+    $bestDistinct = [int]::MaxValue
+    for ($i = 0; $i -le $ordered.Count - $Window; $i++) {
+        $d = (@($ordered[$i..($i + $Window - 1)] | ForEach-Object { $_.sig } |
+                Sort-Object -Unique)).Count
+        if ($d -lt $bestDistinct) { $bestDistinct = $d; $bestStart = $i }
+    }
+    if ($bestStart -lt 0) { return $quiet }
+    $quiet.distinct = $bestDistinct
+    if ($bestDistinct -gt $MaxDistinct) { return $quiet }
+
+    # Grow the stretch outward while it stays repetitive, so the span reported
+    # is the actual loop rather than an arbitrary $Window-sized slice of it.
+    $lo = $bestStart
+    $hi = $bestStart + $Window - 1
+    $distinctOf = {
+        param($a, $b)
+        (@($ordered[$a..$b] | ForEach-Object { $_.sig } | Sort-Object -Unique)).Count
+    }
+    $grew = $true
+    while ($grew) {
+        $grew = $false
+        if ($lo -gt 0 -and (& $distinctOf ($lo - 1) $hi) -le $MaxDistinct) {
+            $lo--; $grew = $true
+        }
+        if ($hi -lt ($ordered.Count - 1) -and (& $distinctOf $lo ($hi + 1)) -le $MaxDistinct) {
+            $hi++; $grew = $true
+        }
+    }
+
+    $stretch = $ordered[$lo..$hi]
+    $tokens = [long]0; $cost = 0.0
+    foreach ($e in $stretch) { $tokens += $e.sum; $cost += $e.cost }
+    $span = [TimeSpan]::FromTicks([long]($stretch[-1].ticks - $stretch[0].ticks))
+
+    # Which calls, and how often. Truncated for display - the input is in the
+    # signature to make the match exact, not to be read on screen.
+    $counts = @{}
+    foreach ($e in $stretch) {
+        foreach ($c in $e.calls) {
+            $short = $c
+            $paren = $short.IndexOf('(')
+            if ($paren -gt 0) {
+                $name = $short.Substring(0, $paren)
+                $arg  = $short.Substring($paren + 1).TrimEnd(')')
+                # The full input JSON is in the signature so the match is
+                # exact; for display, unwrap the commonest shape - a
+                # single-key object - so the line reads Bash(npm test)
+                # rather than Bash({"command":"npm test"}).
+                $m = [regex]::Match($arg, '^\{\s*"[^"]+"\s*:\s*"?(.*?)"?\s*\}$')
+                if ($m.Success) { $arg = $m.Groups[1].Value }
+                $arg = $arg -replace '\\"', '"' -replace '\\\\', '\' -replace '\s+', ' '
+                if ($arg.Length -gt 40) {
+                    $arg = $arg.Substring(0, 39) + [string][char]0x2026
+                }
+                $short = '{0}({1})' -f $name, $arg
+            }
+            if (-not $counts.ContainsKey($short)) { $counts[$short] = 0 }
+            $counts[$short]++
+        }
+    }
+    $callList = @($counts.GetEnumerator() | Sort-Object -Property Value -Descending |
+        ForEach-Object { '{0} x{1}' -f $_.Key, $_.Value })
+
+    [pscustomobject]@{
+        # Repetitive but cheap is information, not an alarm: that is what a
+        # legitimate polling loop looks like.
+        tripped  = ($tokens -ge $TokenFloor)
+        distinct = $bestDistinct
+        window   = $Window
+        turns    = $stretch.Count
+        tokens   = $tokens
+        cost     = $cost
+        span     = $span
+        calls    = $callList
     }
 }
 
@@ -682,6 +895,35 @@ function Build-Frame {
     if ($ctxLimit -gt 0) { $ctxPct = [math]::Min(100, ($Scan.ctxTokens / [double]$ctxLimit) * 100) }
     [void]$lines.Add((Color $fgCtx "CONTEXT        ") + '    ' +
         (Color $fgDim ("{0} / 200k  ({1:0}%)" -f (Fmt-Tokens $Scan.ctxTokens), $ctxPct)))
+
+    # Loop watch (#41) ------------------------------------------------------
+    # Three states, and the quiet one is stated explicitly rather than omitted:
+    # a blank line can't distinguish "checked, found nothing" from "didn't run".
+    $lw = $Scan.loop
+    if ($null -ne $lw) {
+        if ($lw.tripped) {
+            [void]$lines.Add((Color $fgPctRed "LOOP WATCH     ") + '    ' +
+                ("{0} turns cycling {1} distinct call(s)   {2} tok   {3}   {4}" -f
+                    $lw.turns, $lw.distinct, (Fmt-Tokens $lw.tokens),
+                    (Fmt-Cost $lw.cost), (Fmt-Duration $lw.span)))
+            foreach ($c in ($lw.calls | Select-Object -First 2)) {
+                [void]$lines.Add((Color $fgDim ('                   ' + $c)))
+            }
+        } elseif ($null -ne $lw.distinct -and $lw.distinct -le $script:loopMaxDistinct) {
+            # Repetitive but under the token floor. This is what a deliberate
+            # polling loop looks like, so it is reported, not alarmed about.
+            [void]$lines.Add((Color $fgPctYellow "LOOP WATCH     ") + '    ' +
+                (Color $fgDim ("repeating but cheap - {0} turns, {1} tok (floor {2})" -f
+                    $lw.turns, (Fmt-Tokens $lw.tokens), (Fmt-Tokens $script:loopTokenFloor))))
+        } elseif ($null -ne $lw.distinct) {
+            [void]$lines.Add((Color $fgCtx "LOOP WATCH     ") + '    ' +
+                (Color $fgDim ("quiet - {0} of last {1} tool turns distinct" -f
+                    $lw.distinct, $lw.window)))
+        } else {
+            [void]$lines.Add((Color $fgCtx "LOOP WATCH     ") + '    ' +
+                (Color $fgDim ("quiet - fewer than {0} tool turns to compare" -f $lw.window)))
+        }
+    }
     [void]$lines.Add('')
 
     # Top projects + top models --------------------------------------------

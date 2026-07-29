@@ -6,7 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Loop watch in `claude-dashboard.ps1`** (#41). Flags a repeating tool pattern that is burning tokens — an agent re-running the same command, or cycling between two files, without making progress.
+
+  Detection is by **repetition, not cost anomaly**. #30 proposed a 3-sigma-above-mean test, which fails on precisely the case most worth catching: a loop of individually cheap turns drags the session mean toward itself and collapses the variance, so it scores *lower* the longer it runs (0.17 sigma at 5 turns, 0.07 at 80, in simulation). Worse, it inverts — past ~40 loop turns an ordinary turn scores 4.4 sigma and gets flagged as the anomaly instead. Repetition is a structural property of the call sequence, so no estimator can be contaminated.
+
+  Repetition alone is not the alarm: a deliberate poll-until-ready loop repeats too. The alarm is repetition **plus** accumulated tokens crossing a floor — polling stays cheap and renders as `repeating but cheap`, while a runaway loop re-reads the whole context each turn and crosses it fast.
+
+  A sliding window is used rather than consecutive-identical matching, so an alternating A,B,A,B loop is caught (verified: it trips at 2 distinct calls, where consecutive matching would score 0 repeats). The flagged stretch grows outward from the worst window while it stays repetitive, so the reported span is the loop rather than an arbitrary 10-turn slice.
+
+  Thresholds default to `10,3,1000000` and are overridable with `STATUSLINE_LOOP_WATCH=window,maxDistinct,tokenFloor`. Calibrated against 18 real sessions / 1,000 tool calls in which healthy work never dropped below 8 distinct calls per 10-turn window, and exact identical consecutive calls never occurred at all.
+
+  Confined to the dashboard: no change to `statusline-tokens.ps1`, no cache-schema bump, and nothing added to the per-render hot path. Only lines containing `"tool_use"` get a full JSON parse (~100 of many thousands), and the harvest runs before the message-id de-duplication, which would otherwise discard the tool_use lines in favour of a turn's first content block.
+
+  Design credit: @Keesan12 on #30.
 
 ## [0.4.0] - 2026-07-29
 

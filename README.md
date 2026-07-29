@@ -40,6 +40,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **20-second on-disk result cache** keyed by current account so switches auto-invalidate
 - **Zero dependencies** beyond PowerShell 5.1 (ships with Windows 10/11) and `git` (for the branch name)
 - **No network calls, no telemetry** — everything reads from your local `~/.claude` directory
+- **Loop watch** in the dashboard — flags an agent stuck repeating the same tool calls while burning tokens, using repetition rather than cost-anomaly detection. See [Loop watch](#loop-watch)
 - **Live dashboard companion** — `claude-dashboard.ps1` opens a full-screen, re-rendering view of the same numbers plus a per-project table, opus/sonnet/haiku split, and a 24-hour activity sparkline. See [Dashboard](#dashboard) below.
 
 ## Dashboard
@@ -62,6 +63,7 @@ CLAUDE USAGE DASHBOARD                          you@example.com
 
 CURRENT SESSION     34m 46s, 284 turns         28.2M tok  $117
 CONTEXT             94.8k / 200k  (47%)
+LOOP WATCH          quiet - 9 of last 10 tool turns distinct
 
 TOP PROJECTS (7d)                    TOP MODELS (7d)
 my-app           137.8M   opus       322.1M       $928
@@ -80,6 +82,36 @@ Flags:
 - `-RefreshSeconds <int>` — how often to re-scan and re-render (default `20`, matches the statusline cache TTL so the two stay in sync).
 - `-SparklineHours <int>` — width of the activity chart in hourly buckets (default `24`).
 - `-Once` — render a single frame and exit, useful for scripting or one-off inspection.
+
+### Loop watch
+
+The dashboard flags a repeating tool pattern that is burning tokens — an agent
+stuck re-running the same command, or cycling between two files, without making
+progress.
+
+```
+LOOP WATCH          18 turns cycling 1 distinct call(s)   3.6M tok   $2.71   4m 12s
+                    Bash(pytest tests/) x18
+```
+
+It watches for **repetition, not cost anomaly**. A threshold based on "this turn
+costs more than 3 standard deviations above the session mean" fails on exactly
+the case you most want caught: a loop of individually cheap turns drags the mean
+toward itself and shrinks the variance, so it scores *lower* the longer it runs —
+and past roughly 40 turns it inverts, flagging your legitimate work as the
+anomaly instead. Repetition is a structural property of the call sequence, so
+there is no statistic for the loop to contaminate.
+
+Repetition alone isn't the alarm, though — a deliberate poll-until-ready loop
+repeats too. The alarm is repetition **plus** accumulating tokens: polling stays
+cheap and reports as `repeating but cheap`, while a runaway loop re-reads your
+whole context every turn and crosses the floor quickly.
+
+Calibrated against 18 real sessions in which healthy work never dropped below 8
+distinct calls per 10-turn window. Override the thresholds with
+`STATUSLINE_LOOP_WATCH=window,maxDistinct,tokenFloor` (default `10,3,1000000`).
+
+Design credit: [@Keesan12](https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues/30#issuecomment-4624506065).
 
 The percentage bars need the statusline to have run at least once in the last 10 minutes — that's how the dashboard learns the authoritative `rate_limits.used_percentage` numbers from Claude Code's hook payload. Until then, the bars show `--%` and you still get tokens, cost, model split, projects, and the sparkline from a direct JSONL scan.
 
