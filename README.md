@@ -64,6 +64,7 @@ CLAUDE USAGE DASHBOARD                          you@example.com
 CURRENT SESSION     34m 46s, 284 turns         28.2M tok  $117
 CONTEXT             94.8k / 200k  (47%)
 LOOP WATCH          quiet - 9 of last 10 tool turns distinct
+PRICIEST TURN       $0.42 (612.4k tok) at 12:19
 
 TOP PROJECTS (7d)                    TOP MODELS (7d)
 my-app           137.8M   opus       322.1M       $928
@@ -112,6 +113,38 @@ distinct calls per 10-turn window. Override the thresholds with
 `STATUSLINE_LOOP_WATCH=window,maxDistinct,tokenFloor` (default `10,3,1000000`).
 
 Design credit: [@Keesan12](https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues/30#issuecomment-4624506065).
+
+### Priciest turn
+
+The companion signal to the loop watch, and the other failure shape in that same
+critique: not a loop, but **one turn that costs a fortune on its own**.
+
+```
+PRICIEST TURN       $7.47 (768.2k tok) at 14:14
+```
+
+Reported, but deliberately **not alarmed on by default** — because the shape
+turns out not to be reachable. A single turn is capped by the context window plus
+max output, which fixes its worst case:
+
+| model | worst possible single turn |
+|---|---|
+| Sonnet 5 | $7.92 |
+| Opus 5 / 4.8 / 4.7 | $13.20 |
+| Fable 5 / Mythos 5 | $26.40 |
+| Opus 4.1 (legacy) | $39.60 |
+
+Against a heavy 5-hour window of ~$187, the worst an Opus 5 turn can do is
+**7.1%** of it. One turn cannot blow a 5-hour budget; an accumulating loop can,
+which is why that shape gets the alarm and this one gets a readout.
+
+A naive absolute threshold also misfires. The priciest turn in a real session
+was $7.47 — inspection showed 740k tokens of *cache creation* against 1,968
+tokens of output: a one-off cache priming that makes every later turn cheap.
+Expensive, entirely healthy, and exactly what a $2 floor would have flagged red.
+
+Set `STATUSLINE_SPIKE_FLOOR` to a dollar figure to opt into an alarm anyway —
+worth it on legacy Opus, where the ceiling is $39.60.
 
 The percentage bars need the statusline to have run at least once in the last 10 minutes — that's how the dashboard learns the authoritative `rate_limits.used_percentage` numbers from Claude Code's hook payload. Until then, the bars show `--%` and you still get tokens, cost, model split, projects, and the sparkline from a direct JSONL scan.
 

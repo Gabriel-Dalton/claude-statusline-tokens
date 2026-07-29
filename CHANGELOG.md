@@ -6,7 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.1] - 2026-07-29
+
 ### Added
+
+- **Priciest-turn readout in `claude-dashboard.ps1`** (#30) — the companion to the loop watch, covering the other failure shape in the same critique: one turn that costs a fortune on its own rather than a loop of cheap ones.
+
+  Reported but **not alarmed on by default**, because the shape turns out not to be reachable. A single turn is capped by the context window plus max output, fixing its worst case at $13.20 on Opus 5, $26.40 on Fable 5, $7.92 on Sonnet 5. Against an observed 5-hour window of ~$187, the absolute worst an Opus 5 turn can do is 7.1% of it — one turn cannot blow a 5-hour budget, while an accumulating loop demonstrably can.
+
+  An absolute threshold also misfires in practice. The priciest turn in a real session was $7.47; inspection showed 740,427 tokens of *cache creation* against 1,968 tokens of output — a one-off cache priming that makes every subsequent turn cheap. Expensive, entirely healthy, and precisely what a $2.00 floor would have flagged red. `STATUSLINE_SPIKE_FLOOR` opts into an alarm for anyone who wants one (worth it on legacy Opus, ceiling $39.60).
+
+  This closes out #30 without implementing its σ-based design, which #41 replaced.
 
 - **Loop watch in `claude-dashboard.ps1`** (#41). Flags a repeating tool pattern that is burning tokens — an agent re-running the same command, or cycling between two files, without making progress.
 

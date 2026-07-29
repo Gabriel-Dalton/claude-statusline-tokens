@@ -70,6 +70,36 @@ if ($env:STATUSLINE_LOOP_WATCH -match '^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$') {
     $script:loopTokenFloor  = [long]$Matches[3]
 }
 
+# Spike watch (#30) - the other runaway shape from the design critique on #30:
+# one turn that blows the budget on its own, rather than a loop of cheap ones.
+#
+# Reported, but NOT alarmed on by default, because the arithmetic says the shape
+# is not actually reachable. A single turn is structurally capped by the context
+# window plus max output, so its worst case is fixed:
+#
+#   Opus 5      1M cache write @ $10/M + 128k output @ $25/M  = $13.20
+#   Fable 5     1M @ $20/M + 128k @ $50/M                     = $26.40
+#   Sonnet 5    1M @ $6/M  + 128k @ $15/M                     = $ 7.92
+#
+# Against an observed 5-hour window of ~$187, the absolute worst a single Opus 5
+# turn can do is 7.1% of it. One turn cannot blow a 5-hour budget; an
+# accumulating loop can, which is why that shape got the alarm and this one
+# gets a readout.
+#
+# Measured, a $2.00 floor also generates false positives rather than catches:
+# the priciest turn in a real session was $7.47, and inspection showed 740k
+# tokens of CACHE CREATION with 1,968 tokens of output - a one-off cache
+# priming that makes every later turn cheap. Expensive, entirely healthy, and
+# exactly what a naive absolute threshold would have flagged red.
+#
+# So: 0 means report-only, which is the default. Set STATUSLINE_SPIKE_FLOOR to
+# a dollar figure to opt into an alarm (useful if you run legacy Opus, where
+# the ceiling is $39.60, or if pricing changes the economics).
+$script:spikeCostFloor = 0.0
+if ($env:STATUSLINE_SPIKE_FLOOR -match '^\s*([0-9]+(\.[0-9]+)?)\s*$') {
+    $script:spikeCostFloor = [double]$Matches[1]
+}
+
 # Pricing family vs display family: legacy Opus is billed at its own rate but
 # shown on the 'opus' row, so the breakdown stays one line per model name.
 function Get-DisplayFamily([string]$family) {
@@ -404,6 +434,8 @@ function Invoke-Scan {
     # message id -> that turn's ticks/tokens/cost. Both scoped to the 5h window.
     $toolCallsByTurn = @{}
     $turnCostByTurn  = @{}
+    # Spike watch: the single priciest turn in the 5h window.
+    $spikeTurn = @{ cost = 0.0; sum = [long]0; ticks = [long]0; model = '' }
 
     if (-not (Test-Path $projectsDir)) {
         return [pscustomobject]@{
@@ -411,6 +443,7 @@ function Invoke-Scan {
             oldest5h = $null; oldest7d = $null
             modelTokens = $modelTokens; modelCost = $modelCost
             loop = $null
+            spike = $null
             projectTokens = $projectTokens; projectCost = $projectCost
             sparkBuckets = $sparkBuckets
             tokSession = 0; costSession = 0; sessionStart = $null; sessionTurns = 0
@@ -544,6 +577,16 @@ function Invoke-Scan {
                     }
                 }
 
+                # Spike watch: keep the single most expensive turn in the 5h
+                # window. No statistics - an absolute threshold cannot be
+                # blinded by the outlier it is looking for, which is precisely
+                # the failure mode of the sigma test this replaces.
+                if ($t -gt $cut5h -and $cost -gt $spikeTurn.cost) {
+                    $spikeTurn = @{
+                        cost = $cost; sum = $sum; ticks = $t.Ticks; model = $modelId
+                    }
+                }
+
                 $turnAcct = Account-At $t $Checkpoints
                 $isCurrent = $true
                 if ($CurrentAccount) {
@@ -663,6 +706,7 @@ function Invoke-Scan {
         oldest5h = $oldest5h; oldest7d = $oldest7d
         modelTokens = $modelTokens; modelCost = $modelCost
         loop = $loopWatch
+        spike = $spikeTurn
         projectTokens = $projectTokens; projectCost = $projectCost
         sparkBuckets = $sparkBuckets
         tokSession = $tokSession; costSession = $costSession
@@ -922,6 +966,25 @@ function Build-Frame {
         } else {
             [void]$lines.Add((Color $fgCtx "LOOP WATCH     ") + '    ' +
                 (Color $fgDim ("quiet - fewer than {0} tool turns to compare" -f $lw.window)))
+        }
+    }
+
+    # Spike watch (#30) - the other runaway shape: one turn, on its own.
+    $sp = $Scan.spike
+    if ($null -ne $sp -and $sp.ticks -gt 0) {
+        $when = ([DateTime]::new([long]$sp.ticks, [DateTimeKind]::Utc)).ToLocalTime().ToString('HH:mm')
+        # An alarm only when one was explicitly asked for. Floor 0 = report-only,
+        # because a single turn is capped too low to blow a 5h budget - see the
+        # threshold comment near the top.
+        if ($script:spikeCostFloor -gt 0 -and $sp.cost -ge $script:spikeCostFloor) {
+            [void]$lines.Add((Color $fgPctRed "PRICIEST TURN  ") + '    ' +
+                ("{0} ({1} tok) at {2}   over your {3} floor" -f
+                    (Fmt-Cost $sp.cost), (Fmt-Tokens $sp.sum), $when,
+                    (Fmt-Cost $script:spikeCostFloor)))
+        } else {
+            [void]$lines.Add((Color $fgCtx "PRICIEST TURN  ") + '    ' +
+                (Color $fgDim ("{0} ({1} tok) at {2}" -f
+                    (Fmt-Cost $sp.cost), (Fmt-Tokens $sp.sum), $when)))
         }
     }
     [void]$lines.Add('')
