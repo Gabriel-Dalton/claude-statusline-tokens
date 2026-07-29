@@ -39,15 +39,58 @@ $OutputEncoding = $utf8NoBom
 # changes published rates.
 # ---------------------------------------------------------------------------
 $prices = @{
-    opus   = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
-    sonnet = @{ input =  3.00; output = 15.00; cacheRead = 0.30; cacheW5m =  3.75; cacheW1h =  6.00 }
-    haiku  = @{ input =  1.00; output =  5.00; cacheRead = 0.10; cacheW5m =  1.25; cacheW1h =  2.00 }
+    fable      = @{ input = 10.00; output = 50.00; cacheRead = 1.00; cacheW5m = 12.50; cacheW1h = 20.00 }
+    opus       = @{ input =  5.00; output = 25.00; cacheRead = 0.50; cacheW5m =  6.25; cacheW1h = 10.00 }
+    opusLegacy = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
+    sonnet     = @{ input =  3.00; output = 15.00; cacheRead = 0.30; cacheW5m =  3.75; cacheW1h =  6.00 }
+    haiku      = @{ input =  1.00; output =  5.00; cacheRead = 0.10; cacheW5m =  1.25; cacheW1h =  2.00 }
 }
 function Get-ModelFamily([string]$id) {
+    if ($id -match 'fable|mythos') { return 'fable' }
+    # Opus 4.1 / 4.0 / 3 predate the price drop to $5/$25.
+    if ($id -match 'opus-4-1|opus-4-0|opus-4-2025|3-opus') { return 'opusLegacy' }
     if ($id -match 'opus')   { return 'opus' }
     if ($id -match 'sonnet') { return 'sonnet' }
     if ($id -match 'haiku')  { return 'haiku' }
     return 'opus'
+}
+# Pricing family vs display family: legacy Opus is billed at its own rate but
+# shown on the 'opus' row, so the breakdown stays one line per model name.
+function Get-DisplayFamily([string]$family) {
+    if ($family -eq 'opusLegacy') { return 'opus' }
+    return $family
+}
+
+# Timestamp normalizer, mirroring statusline-tokens.ps1. Every stamp this
+# script reads is UTC-with-Z today, but parsing defensively means a stamp
+# that ever arrives naive is read as UTC rather than as host-local time —
+# otherwise the same data would produce different windows in different
+# timezones. See the fuller comment in statusline-tokens.ps1.
+$script:utcParseStyles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor `
+                         [Globalization.DateTimeStyles]::AssumeUniversal
+function ConvertTo-Utc($value) {
+    if ($null -eq $value) { return $null }
+    if ($value -is [DateTime]) {
+        if ($value.Kind -eq [DateTimeKind]::Utc)   { return $value }
+        if ($value.Kind -eq [DateTimeKind]::Local) { return $value.ToUniversalTime() }
+        return [DateTime]::SpecifyKind($value, [DateTimeKind]::Utc)
+    }
+    $text = ([string]$value).Trim()
+    if ([string]::IsNullOrEmpty($text)) { return $null }
+    if ($text -match '^\d+$') {
+        $n = 0L
+        if (-not [long]::TryParse($text, [ref]$n)) { return $null }
+        if ($n -le 0) { return $null }
+        $epoch = New-Object DateTime(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+        if ($n -gt 100000000000) { return $epoch.AddMilliseconds($n) }
+        return $epoch.AddSeconds($n)
+    }
+    $parsed = [DateTime]::MinValue
+    if ([DateTime]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture,
+                             $script:utcParseStyles, [ref]$parsed)) {
+        return [DateTime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    return $null
 }
 
 # ---------------------------------------------------------------------------
@@ -131,6 +174,7 @@ $fg5h     = "$esc[38;5;81m"
 $fg7d     = "$esc[38;5;108m"
 $fgSess   = "$esc[38;5;178m"
 $fgCtx    = "$esc[38;5;110m"
+$fgFable  = "$esc[38;5;209m"
 $fgOpus   = "$esc[38;5;141m"
 $fgSon    = "$esc[38;5;81m"
 $fgHaiku  = "$esc[38;5;108m"
@@ -235,13 +279,13 @@ function Read-RateLimitPcts([string]$expectedOrg, [DateTime]$nowUtc) {
         # Staleness gate — if Claude Code hasn't fired the hook in a while
         # the numbers are old; better to show "--%" than mislead.
         if ($cache.PSObject.Properties.Match('pctSavedAtUtc').Count -gt 0 -and $cache.pctSavedAtUtc) {
-            try {
-                $age = ($nowUtc - [DateTime]::Parse($cache.pctSavedAtUtc).ToUniversalTime()).TotalMinutes
-                if ($age -gt 10) {
-                    $out.pct5h = -1.0
-                    $out.pct7d = -1.0
-                }
-            } catch {}
+            $savedAt = ConvertTo-Utc $cache.pctSavedAtUtc
+            # An unreadable stamp is treated as stale rather than as fresh —
+            # showing '--%' is honest, showing an unknown-age number is not.
+            if ($null -eq $savedAt -or ($nowUtc - $savedAt).TotalMinutes -gt 10) {
+                $out.pct5h = -1.0
+                $out.pct7d = -1.0
+            }
         }
     } catch {}
     return $out
@@ -282,7 +326,8 @@ function Account-At([DateTime]$t, $checkpoints) {
     if (-not $checkpoints -or $checkpoints.Count -eq 0) { return $null }
     $acct = $checkpoints[0]
     foreach ($cp in $checkpoints) {
-        try { $cpTime = [DateTime]::Parse($cp.from).ToUniversalTime() } catch { continue }
+        $cpTime = ConvertTo-Utc $cp.from
+        if ($null -eq $cpTime) { continue }
         if ($t -ge $cpTime) { $acct = $cp } else { break }
     }
     return $acct
@@ -326,8 +371,10 @@ function Invoke-Scan {
     $tok7d  = [long]0; $cost7d  = 0.0
     $oldest5h = $null
     $oldest7d = $null
-    $modelTokens = @{ opus = [long]0; sonnet = [long]0; haiku = [long]0 }
-    $modelCost   = @{ opus = 0.0;     sonnet = 0.0;     haiku = 0.0     }
+    # Keyed by *display* family (legacy Opus folds into 'opus'), so a Fable
+    # turn lands in its own bucket instead of silently missing from the split.
+    $modelTokens = @{ fable = [long]0; opus = [long]0; sonnet = [long]0; haiku = [long]0 }
+    $modelCost   = @{ fable = 0.0;     opus = 0.0;     sonnet = 0.0;     haiku = 0.0     }
     $projectTokens = @{}
     $projectCost   = @{}
     $sparkBuckets = New-Object 'long[]' $SparklineHours
@@ -387,9 +434,11 @@ function Invoke-Scan {
 
                 $mTs = $rxTs.Match($line)
                 if (-not $mTs.Success) { continue }
-                $t = $null
-                try { $t = [DateTime]::Parse($mTs.Groups[1].Value).ToUniversalTime() }
-                catch { continue }
+                # AssumeUniversal: a stamp without an offset is UTC, not local.
+                $t = [DateTime]::MinValue
+                if (-not [DateTime]::TryParse($mTs.Groups[1].Value,
+                        [Globalization.CultureInfo]::InvariantCulture,
+                        $script:utcParseStyles, [ref]$t)) { continue }
                 if ($t -lt $cut7d) { continue }
 
                 # Same-message dedup: a single assistant turn is logged once
@@ -434,8 +483,11 @@ function Invoke-Scan {
                 if ($isCurrent) {
                     $tok7d  += $sum;  $cost7d += $cost
                     if (-not $oldest7d -or $t -lt $oldest7d) { $oldest7d = $t }
-                    $modelTokens[$family] += $sum
-                    $modelCost[$family]   += $cost
+                    # Cost was already computed at $family's own rate above;
+                    # only the bucket label collapses legacy Opus into 'opus'.
+                    $displayFamily = Get-DisplayFamily $family
+                    $modelTokens[$displayFamily] += $sum
+                    $modelCost[$displayFamily]   += $cost
                     if (-not $projectTokens.ContainsKey($projLabel)) {
                         $projectTokens[$projLabel] = [long]0
                         $projectCost[$projLabel]   = 0.0
@@ -583,13 +635,20 @@ function Build-Frame {
         if ($rollOut.TotalSeconds -gt 0) { $countdown5 = Fmt-Duration $rollOut }
     }
     $pctText5 = if ($Scan.pct5h -ge 0) { (Color $pctColor5 ('{0,3:0}%' -f $Scan.pct5h)) } else { (Color $fgDim ' --%') }
+    # Fable joins the inline split only when it has usage, so the line keeps
+    # its existing width for anyone who never runs it.
+    $splitParts = @()
+    if ($Scan.modelTokens.fable -gt 0) {
+        $splitParts += ('fable {0}' -f (Fmt-Tokens $Scan.modelTokens.fable))
+    }
+    $splitParts += ('opus {0}'   -f (Fmt-Tokens $Scan.modelTokens.opus))
+    $splitParts += ('sonnet {0}' -f (Fmt-Tokens $Scan.modelTokens.sonnet))
+    $splitParts += ('haiku {0}'  -f (Fmt-Tokens $Scan.modelTokens.haiku))
+    $inlineSplit = $splitParts -join '  |  '
     [void]$lines.Add((Color $fg5h "5-HOUR WINDOW") + (' ' * 6) +
         ("{0} {1}  {2} tok   {3}" -f $bar5, $pctText5, (Fmt-Tokens $Scan.tok5h), (Fmt-Cost $Scan.cost5h)))
     [void]$lines.Add((Color $fgDim "     oldest turn rolls out in $countdown5") + '   ' +
-        (Color $fgDim ("opus {0}  |  sonnet {1}  |  haiku {2}" -f
-            (Fmt-Tokens $Scan.modelTokens.opus),
-            (Fmt-Tokens $Scan.modelTokens.sonnet),
-            (Fmt-Tokens $Scan.modelTokens.haiku))))
+        (Color $fgDim $inlineSplit))
     [void]$lines.Add('')
 
     # 7-day window ---------------------------------------------------------
@@ -630,11 +689,14 @@ function Build-Frame {
         (Color $fgLabel "TOP MODELS (7d)"))
     $topProjects = @($Scan.projectTokens.GetEnumerator() |
         Sort-Object -Property Value -Descending | Select-Object -First 5)
-    $modelRows = @(
-        @{ name = 'opus';   tok = $Scan.modelTokens.opus;   cost = $Scan.modelCost.opus;   color = $fgOpus  }
-        @{ name = 'sonnet'; tok = $Scan.modelTokens.sonnet; cost = $Scan.modelCost.sonnet; color = $fgSon   }
-        @{ name = 'haiku';  tok = $Scan.modelTokens.haiku;  cost = $Scan.modelCost.haiku;  color = $fgHaiku }
-    )
+    $modelRows = @()
+    # Same rule as the inline split: Fable earns a row once it has usage.
+    if ($Scan.modelTokens.fable -gt 0) {
+        $modelRows += @{ name = 'fable'; tok = $Scan.modelTokens.fable; cost = $Scan.modelCost.fable; color = $fgFable }
+    }
+    $modelRows += @{ name = 'opus';   tok = $Scan.modelTokens.opus;   cost = $Scan.modelCost.opus;   color = $fgOpus  }
+    $modelRows += @{ name = 'sonnet'; tok = $Scan.modelTokens.sonnet; cost = $Scan.modelCost.sonnet; color = $fgSon   }
+    $modelRows += @{ name = 'haiku';  tok = $Scan.modelTokens.haiku;  cost = $Scan.modelCost.haiku;  color = $fgHaiku }
     $rowsNeeded = [math]::Max($topProjects.Count, $modelRows.Count)
     if ($rowsNeeded -lt 3) { $rowsNeeded = 3 }
     for ($i = 0; $i -lt $rowsNeeded; $i++) {

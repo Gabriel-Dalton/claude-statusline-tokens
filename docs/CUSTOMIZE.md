@@ -137,7 +137,9 @@ In the `$prices` hashtable near the top:
 
 ```powershell
 $prices = @{
-    opus       = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
+    fable      = @{ input = 10.00; output = 50.00; cacheRead = 1.00; cacheW5m = 12.50; cacheW1h = 20.00 }
+    opus       = @{ input =  5.00; output = 25.00; cacheRead = 0.50; cacheW5m =  6.25; cacheW1h = 10.00 }
+    opusLegacy = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
     sonnet     = @{ input =  3.00; output = 15.00; cacheRead = 0.30; cacheW5m =  3.75; cacheW1h =  6.00 }
     haiku      = @{ input =  1.00; output =  5.00; cacheRead = 0.10; cacheW5m =  1.25; cacheW1h =  2.00 }
     # Add your model here:
@@ -145,10 +147,14 @@ $prices = @{
 }
 ```
 
-Then add a match arm to `Get-ModelFamily`:
+Then add a match arm to `Get-ModelFamily`. **Order matters** — the first match
+wins, so a narrow pattern has to be tested before any broader one that would
+also match it (which is why legacy Opus sits above the generic `opus` arm):
 
 ```powershell
 function Get-ModelFamily([string]$id) {
+    if ($id -match 'fable|mythos') { return 'fable' }
+    if ($id -match 'opus-4-1|opus-4-0|opus-4-2025|3-opus') { return 'opusLegacy' }
     if ($id -match 'opus')   { return 'opus' }
     if ($id -match 'sonnet') { return 'sonnet' }
     if ($id -match 'haiku')  { return 'haiku' }
@@ -156,6 +162,9 @@ function Get-ModelFamily([string]$id) {
     return 'opus'
 }
 ```
+
+If you add a family, update the same two blocks in `claude-dashboard.ps1` so
+the dashboard's per-model breakdown agrees with the status line.
 
 The transcript's `message.model` is what gets matched — whatever string ends up in `"model":"<value>"` in your JSONL. Run `Get-Content <session>.jsonl | Select-String '"model":"' -SimpleMatch | Select-Object -First 1` to see the exact strings to match against.
 

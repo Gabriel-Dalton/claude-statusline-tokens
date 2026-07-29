@@ -7,6 +7,15 @@
 [System.Threading.Thread]::CurrentThread.CurrentCulture =
     [System.Globalization.CultureInfo]::InvariantCulture
 
+# Timestamp parsing contract, applied everywhere this script reads a time:
+#   AdjustToUniversal - a stamp carrying an offset is converted to UTC
+#   AssumeUniversal   - a stamp carrying none is read as UTC, NOT as local
+# Without the second flag, a naive timestamp is interpreted in the host's
+# timezone, so the same transcript would produce different windows on a
+# Pacific machine than on a UTC one.
+$script:utcParseStyles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor `
+                         [Globalization.DateTimeStyles]::AssumeUniversal
+
 # Stub: M2-05 will route to a rotating log at ~/.claude/statusline-tokens.log
 # when $env:STATUSLINE_DEBUG is set. For now this swallows quietly.
 function Write-DebugLog {
@@ -17,6 +26,50 @@ function Write-DebugLog {
         [string]$Scope = ''
     )
     # Intentional no-op until M2-05.
+}
+
+# Normalize an arbitrary timestamp into a UTC [DateTime], or $null.
+#
+# `rate_limits.*.resets_at` is not a fixed shape. Claude Code sends a Unix
+# epoch (seconds), this script's own cache round-trips ISO-8601, and
+# ConvertFrom-Json hands back a live [DateTime] on some payload shapes.
+# The previous implementation called [DateTime]::Parse directly, which threw
+# on the epoch form; the catch swallowed it and the reset countdown silently
+# never rendered — the failure looked exactly like "Claude Code didn't send
+# the field", so it survived a debugging pass.
+#
+# Timezone contract: the returned value is always Kind=Utc. A timestamp that
+# carries offset information is converted; one that carries none is *assumed*
+# to be UTC rather than machine-local, so output never varies with the host's
+# timezone. Conversion to local time happens only at render.
+function ConvertTo-ResetUtc($value) {
+    if ($null -eq $value) { return $null }
+    if ($value -is [DateTime]) {
+        # Kind is load-bearing: ToUniversalTime() on an Unspecified DateTime
+        # treats it as local and shifts it by the host offset (7-8 hours on
+        # US Pacific, depending on DST).
+        if ($value.Kind -eq [DateTimeKind]::Utc)   { return $value }
+        if ($value.Kind -eq [DateTimeKind]::Local) { return $value.ToUniversalTime() }
+        return [DateTime]::SpecifyKind($value, [DateTimeKind]::Utc)
+    }
+    $text = ([string]$value).Trim()
+    if ([string]::IsNullOrEmpty($text)) { return $null }
+    if ($text -match '^\d+$') {
+        $n = 0L
+        if (-not [long]::TryParse($text, [ref]$n)) { return $null }
+        if ($n -le 0) { return $null }
+        $epoch = New-Object DateTime(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+        # 1e11 seconds lands in the year 5138, so anything larger is millis.
+        if ($n -gt 100000000000) { return $epoch.AddMilliseconds($n) }
+        return $epoch.AddSeconds($n)
+    }
+    $parsed = [DateTime]::MinValue
+    if ([DateTime]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture,
+                             $script:utcParseStyles, [ref]$parsed)) {
+        return [DateTime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    Write-DebugLog "unparseable timestamp: $text" -Scope 'timestamp-parse'
+    return $null
 }
 
 # Safe dotted-path accessor for the parsed hook JSON (M1-10).
@@ -212,6 +265,10 @@ $pct5hRaw    = Get-HookField $hook 'rate_limits.five_hour.used_percentage' -Fall
 $pct7dRaw    = Get-HookField $hook 'rate_limits.seven_day.used_percentage' -Fallback $null
 $resets5hRaw = Get-HookField $hook 'rate_limits.five_hour.resets_at'       -Fallback $null
 $resets7dRaw = Get-HookField $hook 'rate_limits.seven_day.resets_at'       -Fallback $null
+# Normalized to UTC [DateTime] once, here, so every consumer downstream
+# (render, cache write) works with one shape instead of re-parsing.
+$reset5hUtc  = ConvertTo-ResetUtc $resets5hRaw
+$reset7dUtc  = ConvertTo-ResetUtc $resets7dRaw
 
 $hookFields = [pscustomobject]@{
     transcript_path     = $transcriptPathResolved
@@ -221,8 +278,8 @@ $hookFields = [pscustomobject]@{
     model_id            = $modelIdResolved
     pct5h               = $pct5hRaw
     pct7d               = $pct7dRaw
-    resets5h            = $resets5hRaw
-    resets7d            = $resets7dRaw
+    resets5h            = $reset5hUtc
+    resets7d            = $reset7dUtc
 }
 
 function Fmt-Tokens([long]$n) {
@@ -233,17 +290,31 @@ function Fmt-Tokens([long]$n) {
 
 # --- pricing (USD per 1M tokens) ------------------------------------------
 # Source: Anthropic's published API rates. Update when they change.
-# Cache write rates: 5m ephemeral = 1.25x input, 1h ephemeral = 2x input.
+# Cache read = 0.1x input. Cache write: 5m ephemeral = 1.25x input,
+# 1h ephemeral = 2x input. Every row is derived from its own input rate.
+#
+# Opus is deliberately split across two rows. Opus 4.5 and everything after
+# it (4.6, 4.7, 4.8, Opus 5) is $5/$25; Opus 4.1, Opus 4.0 and Opus 3 were
+# $15/$75. Charging all Opus traffic at the legacy rate overstates a current
+# session by 3x, which is the difference between "$60 of work" and "$20".
 $prices = @{
-    opus   = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
-    sonnet = @{ input =  3.00; output = 15.00; cacheRead = 0.30; cacheW5m =  3.75; cacheW1h =  6.00 }
-    haiku  = @{ input =  1.00; output =  5.00; cacheRead = 0.10; cacheW5m =  1.25; cacheW1h =  2.00 }
+    fable      = @{ input = 10.00; output = 50.00; cacheRead = 1.00; cacheW5m = 12.50; cacheW1h = 20.00 }
+    opus       = @{ input =  5.00; output = 25.00; cacheRead = 0.50; cacheW5m =  6.25; cacheW1h = 10.00 }
+    opusLegacy = @{ input = 15.00; output = 75.00; cacheRead = 1.50; cacheW5m = 18.75; cacheW1h = 30.00 }
+    sonnet     = @{ input =  3.00; output = 15.00; cacheRead = 0.30; cacheW5m =  3.75; cacheW1h =  6.00 }
+    haiku      = @{ input =  1.00; output =  5.00; cacheRead = 0.10; cacheW5m =  1.25; cacheW1h =  2.00 }
 }
 function Get-ModelFamily([string]$id) {
+    # Fable 5 / Mythos 5 — top tier, priced above Opus.
+    if ($id -match 'fable|mythos') { return 'fable' }
+    # Pre-price-drop Opus, matched ahead of the generic 'opus' arm.
+    if ($id -match 'opus-4-1|opus-4-0|opus-4-2025|3-opus') { return 'opusLegacy' }
     if ($id -match 'opus')   { return 'opus' }
+    # Sonnet 5 has an introductory $2/$10 rate through 2026-08-31; $3/$15 is
+    # the standing rate and the conservative one to bill against.
     if ($id -match 'sonnet') { return 'sonnet' }
     if ($id -match 'haiku')  { return 'haiku' }
-    return 'opus'  # conservative fallback: over-estimate rather than under
+    return 'opus'  # unknown model: assume current Opus rather than guess low
 }
 function Fmt-Cost([double]$d) {
     if ($d -ge 1000) { return '${0:0.0}k' -f ($d / 1000.0) }
@@ -253,9 +324,12 @@ function Fmt-Cost([double]$d) {
     return '$0.00'
 }
 
-# Compact relative duration: "45m" / "2h15m" / "3d12h" / "5d"
+# Compact relative duration: "45m" / "2h15m" / "3d12h" / "5d". Computed from
+# a TimeSpan between two UTC instants, which makes it DST-proof — a window
+# spanning a clock change still reports the true hours remaining.
 function Fmt-Relative([TimeSpan]$ts) {
     if ($ts.TotalSeconds -le 0) { return 'now' }
+    if ($ts.TotalSeconds -lt 60) { return '<1m' }   # avoids a bare "0m"
     $totalMin = [int][math]::Floor($ts.TotalMinutes)
     if ($totalMin -lt 60) { return ('{0}m' -f $totalMin) }
     $hours = [int][math]::Floor($ts.TotalHours)
@@ -270,8 +344,16 @@ function Fmt-Relative([TimeSpan]$ts) {
     return ('{0}d' -f $days)
 }
 
-# Local clock time, lowercase am/pm; optional day-of-week prefix for far-out resets
+# Local clock time, lowercase am/pm; optional day-of-week prefix for far-out
+# resets. ToLocalTime() resolves the offset for that specific instant against
+# the OS timezone database, so a reset on the far side of a DST boundary
+# prints the correct wall clock rather than one shifted by an hour.
 function Fmt-AbsLocal([DateTime]$utc, [bool]$includeDay) {
+    # ToLocalTime() only shifts a value whose Kind is Utc. On an Unspecified
+    # one it is a silent no-op, printing the UTC time as though it were local.
+    if ($utc.Kind -ne [DateTimeKind]::Utc) {
+        $utc = [DateTime]::SpecifyKind($utc, [DateTimeKind]::Utc)
+    }
     $local = $utc.ToLocalTime()
     $h = $local.Hour
     $m = $local.Minute
@@ -286,14 +368,12 @@ function Fmt-AbsLocal([DateTime]$utc, [bool]$includeDay) {
     return $time
 }
 
-# "2h15m @ 7:30pm" — returns $null on missing/unparseable/past timestamps
-function Fmt-Reset($iso, [bool]$includeDay) {
-    if ([string]::IsNullOrEmpty($iso)) { return $null }
-    $resetUtc = $null
-    try { $resetUtc = [DateTime]::Parse($iso).ToUniversalTime() } catch {
-        Write-DebugLog $_ -Scope 'reset-parse'
-        return $null
-    }
+# "2h15m @ 7:30pm" — returns $null on missing/unparseable/elapsed timestamps.
+# Accepts any shape ConvertTo-ResetUtc understands: epoch seconds, epoch
+# milliseconds, ISO-8601 (with or without offset), or a [DateTime].
+function Fmt-Reset($value, [bool]$includeDay) {
+    $resetUtc = ConvertTo-ResetUtc $value
+    if ($null -eq $resetUtc) { return $null }
     $ts = $resetUtc - [DateTime]::UtcNow
     if ($ts.TotalSeconds -le 0) { return $null }
     return ('{0} @ {1}' -f (Fmt-Relative $ts), (Fmt-AbsLocal $resetUtc $includeDay))
@@ -486,8 +566,12 @@ function Account-At([DateTime]$t) {
     if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
     $acct = $script:checkpoints[0]
     foreach ($cp in $script:checkpoints) {
-        try { $cpTime = [DateTime]::Parse($cp.from).ToUniversalTime() } catch {
-            Write-DebugLog $_ -Scope 'checkpoint-parse'
+        # Checkpoints are written by this script as round-trip ISO ('o'), but
+        # go through the same normalizer so a hand-edited or legacy file can't
+        # produce a timezone-shifted attribution boundary.
+        $cpTime = ConvertTo-ResetUtc $cp.from
+        if ($null -eq $cpTime) {
+            Write-DebugLog "unparseable checkpoint 'from': $($cp.from)" -Scope 'checkpoint-parse'
             continue
         }
         if ($t -ge $cpTime) { $acct = $cp } else { break }
@@ -521,7 +605,11 @@ $transcriptCache = @{}
 if (Test-Path $cachePath) {
     try {
         $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json -ErrorAction Stop
-        $age = ($nowUtc - [DateTime]::Parse($cache.computedAtUtc).ToUniversalTime()).TotalSeconds
+        # An unparseable or missing stamp counts as infinitely old, so the
+        # scan reruns rather than trusting numbers of unknown vintage.
+        $computedAt = ConvertTo-ResetUtc $cache.computedAtUtc
+        $age = [double]::MaxValue
+        if ($null -ne $computedAt) { $age = ($nowUtc - $computedAt).TotalSeconds }
         # Invalidate if the active account changed since last scan — otherwise
         # the cached per-account numbers belong to the wrong org.
         $cachedOrg = ''
@@ -559,6 +647,25 @@ if (Test-Path $cachePath) {
                 $transcriptCache[$prop.Name] = $prop.Value
             }
         }
+        # Reset timestamps are restored outside the TTL gate on purpose. The
+        # token totals go stale in 20 seconds, but a 5-hour reset stamp stays
+        # true for hours and a 7-day one for days — so when the hook omits
+        # rate_limits (every render before Claude Code's first response of a
+        # session) the last-seen value is still the correct answer, and the
+        # countdown keeps running instead of vanishing.
+        #
+        # They ARE gated on the account: quota windows are per-account, so
+        # replaying the previous org's reset time after a switch would be a
+        # confident lie. Fmt-Reset drops anything already elapsed, so a stale
+        # value expires on its own rather than lingering.
+        if ($cachedOrg -eq $currentOrgKey) {
+            if ($null -eq $reset5hUtc -and $cache.PSObject.Properties.Match('resets5h').Count -gt 0) {
+                $reset5hUtc = ConvertTo-ResetUtc $cache.resets5h
+            }
+            if ($null -eq $reset7dUtc -and $cache.PSObject.Properties.Match('resets7d').Count -gt 0) {
+                $reset7dUtc = ConvertTo-ResetUtc $cache.resets7d
+            }
+        }
     } catch { Write-DebugLog $_ -Scope 'cache-read' }
 }
 
@@ -575,10 +682,17 @@ function Parse-UsageLine([string]$line, [DateTime]$cut7dRef) {
 
     $mTs = $rxTs.Match($line)
     if (-not $mTs.Success) { return $null }
-    $t = $null
-    try { $t = [DateTime]::Parse($mTs.Groups[1].Value).ToUniversalTime() }
-    catch {
-        Write-DebugLog $_ -Scope 'turn-timestamp-parse'
+    # TryParse with AssumeUniversal rather than Parse().ToUniversalTime().
+    # Transcript stamps carry a Z today, but on any that didn't, Parse yields
+    # an Unspecified DateTime and ToUniversalTime() would read it as host-local
+    # and shift it forward by the UTC offset (7-8h on US Pacific), pulling
+    # turns into the 5h window that don't belong there. TryParse also avoids
+    # throwing once per malformed line on a hot path walking 19MB+ of JSONL.
+    $t = [DateTime]::MinValue
+    if (-not [DateTime]::TryParse($mTs.Groups[1].Value,
+            [Globalization.CultureInfo]::InvariantCulture,
+            $script:utcParseStyles, [ref]$t)) {
+        Write-DebugLog "unparseable turn timestamp: $($mTs.Groups[1].Value)" -Scope 'turn-timestamp-parse'
         return $null
     }
     if ($t -lt $cut7dRef) { return $null }
@@ -841,6 +955,12 @@ try {
     if ($null -ne $pct5h -or $null -ne $pct7d) {
         $payload.pctSavedAtUtc = $nowUtc.ToString('o')
     }
+    # Persisted as round-trip ISO-8601 UTC ('o'), never as the raw hook value.
+    # The hook sends an epoch integer, and ConvertTo-Json would write a
+    # [DateTime] as "\/Date(...)\/" — pinning one unambiguous on-disk shape
+    # keeps the reader (and claude-dashboard.ps1) from having to guess.
+    if ($null -ne $reset5hUtc) { $payload.resets5h = $reset5hUtc.ToString('o') }
+    if ($null -ne $reset7dUtc) { $payload.resets7d = $reset7dUtc.ToString('o') }
     # Persist the per-transcript tail cache (M1-04). On a top-level
     # cache HIT (or when no projects dir exists) we didn't scan, so
     # carry forward whatever we loaded from the previous cache file
@@ -1016,19 +1136,32 @@ if ($model)     { $parts += (Color $fgMod $model) }
 # of the status-line output still decoded the bytes as Windows-1252 and
 # rendered 'â€"'. ASCII removes that failure mode entirely.
 $loading = '--%'
-if ($null -ne $pct5h) { $p5 = '{0}%' -f [int][math]::Round([double]$pct5h) } else { $p5 = $loading }
-if ($null -ne $pct7d) { $p7 = '{0}%' -f [int][math]::Round([double]$pct7d) } else { $p7 = $loading }
-# Reset countdown + clock time, e.g. "2h15m @ 7:30pm" for 5h, "3d12h @ Wed 3pm" for 7d.
-# Comes from rate_limits.{five_hour,seven_day}.resets_at in the hook payload (normalized
-# via Get-HookField at the top). Returns $null when the field is missing — typical at
-# session start before Claude Code has issued its first response — and that segment is
-# then omitted gracefully so the line still renders.
-$r5 = Fmt-Reset $hookFields.resets5h $false
-$r7 = Fmt-Reset $hookFields.resets7d $true
+# MidpointRounding::AwayFromZero because .NET defaults to banker's rounding,
+# which resolves .5 toward the nearest even integer — 42.5% renders as "42%"
+# but 43.5% renders as "44%". Parity-dependent rounding is indefensible in a
+# quota readout.
+if ($null -ne $pct5h) {
+    $p5 = '{0}%' -f [int][math]::Round([double]$pct5h, 0, [MidpointRounding]::AwayFromZero)
+} else { $p5 = $loading }
+if ($null -ne $pct7d) {
+    $p7 = '{0}%' -f [int][math]::Round([double]$pct7d, 0, [MidpointRounding]::AwayFromZero)
+} else { $p7 = $loading }
+# Reset countdown + clock time, e.g. "resets 2h15m @ 7:30pm" for the 5h window
+# and "resets 3d12h @ Wed 3pm" for the 7d one. The countdown is a UTC-to-UTC
+# delta (DST can't skew it) and the clock time resolves the offset for that
+# specific instant, so it stays correct across a DST boundary.
+#
+# $reset5hUtc / $reset7dUtc rather than $hookFields.*: the hook fields hold
+# only this render's payload, while these also carry the cached fallback for
+# renders where Claude Code sent no rate_limits at all (every render before
+# its first response of a session). Renders nothing when neither source has a
+# timestamp, rather than guessing.
+$r5 = Fmt-Reset $reset5hUtc $false
+$r7 = Fmt-Reset $reset7dUtc $true
 $body5h = "{0} tok, {1}" -f (Fmt-Tokens $tok5h), (Fmt-Cost $cost5h)
-if ($r5) { $body5h = '{0}, {1}' -f $body5h, $r5 }
+if ($r5) { $body5h = '{0}, resets {1}' -f $body5h, $r5 }
 $body7d = "{0} tok, {1}" -f (Fmt-Tokens $tok7d), (Fmt-Cost $cost7d)
-if ($r7) { $body7d = '{0}, {1}' -f $body7d, $r7 }
+if ($r7) { $body7d = '{0}, resets {1}' -f $body7d, $r7 }
 
 # The percentage gets its own headroom color (green/yellow/red) layered
 # over the segment's identity color so the surrounding "5h … (…)" still

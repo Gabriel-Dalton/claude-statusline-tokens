@@ -20,11 +20,17 @@ Anthropic publishes the absolute rates per model family on [anthropic.com/pricin
 
 | Family | `input` | `output` | `cacheRead` | `cacheW5m` | `cacheW1h` |
 |---|---|---|---|---|---|
-| Opus 4.x   | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
-| Sonnet 4.x |  $3.00 | $15.00 | $0.30 |  $3.75 |  $6.00 |
-| Haiku 4.x  |  $1.00 |  $5.00 | $0.10 |  $1.25 |  $2.00 |
+| `fable` — Fable 5, Mythos 5 | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
+| `opus` — Opus 5, 4.8, 4.7, 4.6, 4.5 |  $5.00 | $25.00 | $0.50 |  $6.25 | $10.00 |
+| `opusLegacy` — Opus 4.1, 4.0, Opus 3 | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
+| `sonnet` — Sonnet 5, 4.x |  $3.00 | $15.00 | $0.30 |  $3.75 |  $6.00 |
+| `haiku` — Haiku 4.x |  $1.00 |  $5.00 | $0.10 |  $1.25 |  $2.00 |
 
-These are stable as of the script's release. If Anthropic publishes new rates, update `$prices` and you're done — no other change needed.
+Every row is derived from its own `input` rate: `cacheRead` is 0.1×, `cacheW5m` is 1.25×, `cacheW1h` is 2×. If Anthropic publishes new rates, update `$prices` and you're done — no other change needed.
+
+**Why Opus is two rows.** Opus dropped from $15/$75 to $5/$25 with Opus 4.5, and the older models are still reachable by pinned model ID. Billing all Opus traffic at the legacy rate overstates a current session by 3×, which is the difference between reading "$60 of work" and "$20". The two rows are matched by model ID, so a transcript mixing both eras still totals correctly.
+
+**Sonnet 5 introductory rate.** Sonnet 5 carries a promotional $2/$10 through 2026-08-31. The table uses the standing $3/$15 — deliberately the conservative choice, since a figure that silently under-reports is worse than one that slightly over-reports.
 
 ## The per-turn formula
 
@@ -43,12 +49,17 @@ cost = ( input_tokens                      * price.input
 
 ### Model → family resolution
 
+Order matters — the first match wins, so the narrow legacy-Opus pattern is
+tested before the broad `*opus*` one:
+
 | `message.model` matches… | uses `$prices` entry |
 |---|---|
-| `*opus*`   | `opus`   |
+| `*fable*`, `*mythos*` | `fable` |
+| `*opus-4-1*`, `*opus-4-0*`, `*opus-4-2025*`, `*3-opus*` | `opusLegacy` |
+| `*opus*` (everything newer) | `opus` |
 | `*sonnet*` | `sonnet` |
 | `*haiku*`  | `haiku`  |
-| anything else | `opus` (conservative fallback — over-estimates rather than under) |
+| anything else | `opus` (fallback — assumes the current flagship rather than guessing low) |
 
 If you use a non-Claude model via a proxy that still writes Claude-compatible `usage` blocks, add an entry to `$prices` and a branch to `Get-ModelFamily`.
 

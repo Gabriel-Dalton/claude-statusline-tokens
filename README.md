@@ -315,12 +315,29 @@ Then edit `~/.claude/settings.json` and remove the `statusLine` block.
 | working dir | `workspace.current_dir` from the hook JSON | orange | — |
 | git branch | `git rev-parse --abbrev-ref HEAD` in that dir | tan | — |
 | model | `model.display_name` from the hook JSON | purple | — |
-| **5h % + tokens + $** | native `rate_limits.five_hour` for the %; transcript scan for tokens and cost | cyan, % shifts green/yellow/red | **current account** |
-| **7d % + tokens + $** | native `rate_limits.seven_day` for the %; transcript scan for tokens and cost | green, % shifts green/yellow/red | **current account** |
+| **5h % + tokens + $ + reset** | native `rate_limits.five_hour` for the % and reset time; transcript scan for tokens and cost | cyan, % shifts green/yellow/red | **current account** |
+| **7d % + tokens + $ + reset** | native `rate_limits.seven_day` for the % and reset time; transcript scan for tokens and cost | green, % shifts green/yellow/red | **current account** |
 | **session tokens + $** | contiguous activity, walking back until a 30-minute gap | gold | **every account in the burst** |
 | ctx | sum of `input + cache` tokens from the last assistant turn of the current session | blue | — |
 
-If `rate_limits` is missing for a given turn (rare; only at session start), the percentage renders as `—`. Token totals and costs always render.
+If `rate_limits` is missing for a given turn (typical at session start, before Claude Code has issued its first response), the percentage renders as `--%`. Token totals and costs always render.
+
+### Reset countdown
+
+Each window segment ends with how long is left before that quota frees up:
+
+```
+5h 42% (15.3M tok, $25.07, resets 2h14m @ 12:38pm)
+7d 18% (15.3M tok, $25.07, resets 6d18h @ Wed 5:34am)
+```
+
+The countdown reads `<1m` / `45m` / `2h14m` / `6d18h`, followed by the wall-clock time it lands on — day-of-week included for the 7-day window.
+
+Three details worth knowing:
+
+- **Shape-agnostic parsing.** `resets_at` arrives from Claude Code as a Unix epoch, but this script's own cache round-trips ISO-8601 and `ConvertFrom-Json` sometimes yields a `[DateTime]`. All three are accepted. (Parsing only the ISO form is a silent failure: the parse throws, the countdown disappears, and it looks exactly like Claude Code never sent the field.)
+- **Survives a missing payload.** The last-seen reset time is cached, so the countdown keeps running on renders where the hook sends no `rate_limits` at all. It's scoped to the signed-in account — after an account switch the previous org's reset time is discarded rather than replayed — and anything already elapsed is dropped rather than shown as a stale or negative value.
+- **Timezone-independent.** Every instant is held as UTC internally and converted to local time only at render, using the OS timezone database. The "time left" figure is a UTC-to-UTC delta, so a DST change can't skew it, and the wall-clock time resolves the offset for that specific instant — a reset landing on the far side of a DST boundary prints correctly rather than an hour off.
 
 > The `5h` and `7d` numbers are scoped to your **current Claude account**, so they always match the percentage Claude Code itself is showing you. The `session` number tracks your **current burst of work** independent of which account is signed in — so a mid-day account switch (or the clock crossing midnight in the middle of a coding session) doesn't fragment it. Read [`docs/SESSION.md`](docs/SESSION.md) and [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md) for the full models.
 
@@ -330,13 +347,15 @@ Pricing uses Anthropic's published per-million-token rates, embedded in the scri
 
 | Family | input | output | cache read | cache write 5m | cache write 1h |
 |---|---|---|---|---|---|
-| Opus 4.x   | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
-| Sonnet 4.x |  $3.00 | $15.00 | $0.30 |  $3.75 |  $6.00 |
+| Fable 5 / Mythos 5 | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
+| Opus 5 / 4.8 / 4.7 / 4.6 / 4.5 |  $5.00 | $25.00 | $0.50 |  $6.25 | $10.00 |
+| Opus 4.1 / 4.0 / Opus 3 | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
+| Sonnet 5 / 4.x |  $3.00 | $15.00 | $0.30 |  $3.75 |  $6.00 |
 | Haiku 4.x  |  $1.00 |  $5.00 | $0.10 |  $1.25 |  $2.00 |
 
 > ⚠️ **This is API-equivalent cost, not your bill.** If you're on Claude Pro / Max / Team / Enterprise, you pay a flat monthly fee regardless of what the status line says. The dollar amount is "what an API customer would have paid to do the same work" — a useful intensity signal, not an invoice.
 >
-> Heavy Claude Code sessions look expensive because **96%+ of your tokens are usually cache reads** at $1.50/M — Anthropic re-bills the same conversation context on every turn, and your dollar figure is mostly those replays, not new work. The actual *fresh* tokens (input + output + cache writes) are a fraction of the total; a $400 5h window is typically ~5M new tokens and 140M cache replay.
+> Heavy Claude Code sessions look expensive because **96%+ of your tokens are usually cache reads** — at current Opus rates, $0.50/M. Anthropic re-bills the same conversation context on every turn, so your dollar figure is mostly those replays, not new work. The actual *fresh* tokens (input + output + cache writes) are a fraction of the total: a ~$120 5h window is typically ~5M new tokens against ~140M of cache replay.
 
 Full pricing logic, model-family mapping, and FAQs live in **[`docs/PRICING.md`](docs/PRICING.md)**.
 

@@ -6,7 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The reset countdown never rendered.** `Fmt-Reset` parsed `resets_at` with `[DateTime]::Parse`, but Claude Code sends it as a **Unix epoch integer** — the parse threw, the `catch` swallowed it, and the segment was silently omitted on every render. Because the failure was indistinguishable from "the hook didn't send the field", it survived an earlier debugging pass. Timestamps now go through a `ConvertTo-ResetUtc` normalizer that accepts epoch seconds, epoch milliseconds, ISO-8601 with or without an offset, and a live `[DateTime]`.
+- **Opus was billed at 3× its actual rate.** `$prices.opus` carried $15/$75 per MTok, the pre-Opus-4.5 rate. Opus 4.5 and everything after it (4.6, 4.7, 4.8, Opus 5) is $5/$25, so every cost figure for current traffic was roughly tripled. Split into `opus` ($5/$25) and `opusLegacy` ($15/$75, for Opus 4.1 / 4.0 / Opus 3), matched by model ID so a transcript spanning both eras still totals correctly.
+- **Timezone-dependent timestamp handling.** Every `[DateTime]::Parse(...).ToUniversalTime()` has been replaced with `TryParse` under `AssumeUniversal | AdjustToUniversal`. The old form reads a timestamp *without* an offset as host-local, so the same transcript produced different 5h/7d windows depending on the machine's timezone — on US Pacific, a naive stamp shifted 7–8 hours into the future and pulled turns into the window that didn't belong there. `Fmt-AbsLocal` now also guards `DateTimeKind`, since `ToLocalTime()` is a silent no-op on an `Unspecified` value and would print UTC as though it were local.
+- Percentages rounded with banker's rounding, so `42.5%` rendered as `42%` while `43.5%` rendered as `44%`. Now uses `MidpointRounding::AwayFromZero`.
+- A cached scan whose `computedAtUtc` was missing or unparseable was treated as fresh. It now counts as infinitely old, forcing a rescan rather than trusting numbers of unknown vintage.
+
 ### Added
+
+- **Fable 5 / Mythos 5 pricing** — $10.00 / $50.00 per MTok (cache read $1.00, 5m write $12.50, 1h write $20.00), matched on `fable|mythos`. `claude-dashboard.ps1` gains a matching bucket in its per-model breakdown, shown only once Fable has usage so the existing layout is unchanged for everyone else.
+- **The reset countdown now survives a payload with no `rate_limits`.** The last-seen reset timestamp is persisted to `~/.claude/statusline-tokens.cache.json` (`resets5h`, `resets7d`, stored as round-trip ISO-8601 UTC) and reused on renders where Claude Code omits the field — which is every render before its first response of a session. The fallback is scoped to the signed-in account, so a switch discards the previous org's window instead of replaying it, and elapsed values are dropped rather than shown stale.
+- Durations under a minute render as `<1m` instead of a bare `0m`.
+
+### Changed
+
+- The reset countdown is now labelled: `5h 42% (15.3M tok, $25.07, resets 2h14m @ 12:38pm)`. Previously the countdown sat unlabelled at the end of the parenthesised group, where `3d15h @ Wed 3pm` was easy to read as something other than a reset time.
 
 - **`claude-dashboard.ps1` — full-screen live usage dashboard.** Run it in its own PowerShell window for a re-rendering view of the 5-hour and 7-day rate-limit windows (with progress bars + the same authoritative percentages the statusline shows), the current session, a top-projects table, a per-model (opus/sonnet/haiku) tokens-and-cost breakdown, and a 24-hour activity sparkline. Reuses the statusline's JSONL scan and account-attribution logic so the two views agree on every number. Refresh interval is configurable (`-RefreshSeconds`, default 20s); `-Once` renders a single frame and exits.
 - **`setup.ps1` — one-command installer.** `git clone … && cd … && .\setup.ps1` copies both scripts into `~/.claude/`, shows a JSON diff and asks before merging the `statusLine` block into `~/.claude/settings.json`, backs up the original to `settings.json.bak`, smoke-tests the statusline, and offers to launch the dashboard once so you can see what you got. Flags: `-DryRun` (preview-only), `-NonInteractive` (CI mode), `-SkipDashboardPreview`, `-Uninstall` (reverses the install and optionally restores the backup).
