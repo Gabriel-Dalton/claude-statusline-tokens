@@ -159,8 +159,9 @@ function Invoke-Uninstall {
     Write-Host ''
     Write-OK "Uninstall complete."
     Write-Host ''
-    Write-Host "  Note: ~/.claude/statusline-tokens.cache.json and statusline-accounts.json"
-    Write-Host "  were left in place (history files). Delete them by hand if you want a clean slate."
+    Write-Host "  Note: ~/.claude/statusline-tokens.cache.json, statusline-accounts.json and"
+    Write-Host "  statusline-scoped-limits.cache.json were left in place (history/cache files)."
+    Write-Host "  Delete them by hand if you want a clean slate."
 }
 
 if ($Uninstall) {

@@ -24,6 +24,14 @@ The script reads from your local filesystem only. Specifically:
   history file. Owned by the script. See `docs/MULTI-ACCOUNT.md`.
 - `~/.claude/statusline-tokens.cache.json` — the script's own 20-second
   result cache. Owned by the script.
+- `~/.claude/statusline-scoped-limits.cache.json` — the script's own cache
+  of per-model weekly quotas. Owned by the script.
+- `~/.claude/.credentials.json` — **read only by the detached refresh child**
+  described below, and only for `claudeAiOauth.accessToken`, which is held in
+  memory for the duration of one HTTPS request and never logged, printed, or
+  cached. The render path does not open this file at all. Where Claude Code
+  keeps credentials in an OS keychain rather than this file, nothing is read
+  and no keychain prompt is raised.
 - `stdin` — the hook JSON payload Claude Code passes to the status-line
   command on every render.
 
@@ -31,8 +39,12 @@ The script reads from your local filesystem only. Specifically:
 
 - `~/.claude/statusline-accounts.json` (its own history).
 - `~/.claude/statusline-tokens.cache.json` (its own cache).
+- `~/.claude/statusline-scoped-limits.cache.json` (its own cache — percentages
+  and reset timestamps only; no token, no credential material).
+- `~/.claude/statusline-scoped-limits.lock` (a zero-byte spawn guard, created
+  and then removed by the refresh child).
 
-That is the complete list. Those two files are the only things the script
+That is the complete list. Those four files are the only things the script
 creates or modifies.
 
 > A debug log at `~/.claude/statusline-tokens.log`, gated behind a
@@ -48,19 +60,54 @@ It does **not** modify `~/.claude.json`, the transcript JSONLs, or
 with a confirmation prompt and a `.bak` backup; the runtime statusline script
 does not).
 
+### The one network call
+
+As of v0.5.0 the script makes exactly one outbound request, and it is worth
+stating precisely because earlier versions of this document promised none.
+
+- **Endpoint:** `GET https://api.anthropic.com/api/oauth/usage` — Anthropic's
+  own usage endpoint, the same one Claude Code's `/usage` command reads. No
+  third-party host is contacted, ever.
+- **Why:** the per-model weekly quota (today, the Fable 5 limit) exists in no
+  local file and is not included in the status-line hook payload, which
+  carries the `five_hour` and `seven_day` buckets only. There is no local
+  source to read it from.
+- **What is sent:** the `Authorization: Bearer` header and nothing else. No
+  request body, no telemetry, no identifier the script invents. Nothing about
+  your projects, prompts, transcripts, or costs is transmitted.
+- **What is received and kept:** a percentage and a reset timestamp per
+  scoped window, written to `statusline-scoped-limits.cache.json`. The access
+  token is never written to it. The failure path deliberately logs no
+  response body, because an auth failure can echo request headers back.
+- **Where it runs:** in a detached child process, never on the render path,
+  at most once per `STATUSLINE_SCOPED_TTL` (default 900 s) across every open
+  Claude Code window, guarded by an atomically created lock file.
+- **How to disable it:** `STATUSLINE_SCOPED_LIMITS=0` (or `off`/`false`/`no`)
+  skips the segment, the cache read and the request. With that set, the
+  statements below about network access hold unconditionally.
+
+The script never refreshes the OAuth token itself. An expired token
+short-circuits before any request is made; renewal is Claude Code's job, and
+racing it on the refresh endpoint could invalidate a live session.
+
 ### What the script does not do
 
-- **No network calls.** Zero `Invoke-WebRequest`, `Invoke-RestMethod`,
-  `System.Net.*`, or equivalent. The script's render is purely local.
 - **No telemetry.** Nothing about your usage, projects, or accounts leaves
-  your machine.
-- **No exfiltration.** OAuth state from `~/.claude.json` is read in-process
-  to extract an account identifier and is never written to any output, log,
-  or cache.
+  your machine. The one request above sends no data about you beyond the
+  credential that authenticates it.
+- **No third-party hosts.** The only origin contacted is
+  `api.anthropic.com`, which Claude Code itself already talks to.
+- **No exfiltration.** OAuth state from `~/.claude.json` and the access token
+  from `~/.claude/.credentials.json` are read in-process and are never
+  written to any output, log, or cache.
+- **No credential writes.** The script never modifies `.credentials.json` and
+  never attempts a token refresh.
 - **No process spawning** other than the optional `git rev-parse
-  --abbrev-ref HEAD` invocation used to render the branch name. (An earlier
-  pre-M1-09 implementation also shelled out to read `.git/HEAD`; that path
-  has been removed.)
+  --abbrev-ref HEAD` invocation used to render the branch name, and the
+  detached copy of itself that performs the refresh above (spawned with
+  stdout/stderr redirected away from the status line, at most once per
+  refresh interval). (An earlier pre-M1-09 implementation also shelled out to
+  read `.git/HEAD`; that path has been removed.)
 
 ## What's sensitive
 
@@ -75,10 +122,14 @@ keep these in mind:
   customer data. The script only parses `usage` blocks, but the files on disk
   contain everything. Treat the transcripts directory like you'd treat a
   shell history file: don't share it without redaction.
+- **The access token in `~/.claude/.credentials.json`** is the same class of
+  secret. The refresh child reads it and never persists it, but the file
+  itself is your Claude Code login — don't share it.
 - **Cache/accounts files** (`statusline-tokens.cache.json`,
-  `statusline-accounts.json`) contain token counts, dollar totals, and
-  organization UUIDs. The UUIDs are not secrets per se, but they identify
-  your Claude org; redact them if you're posting cache output publicly.
+  `statusline-accounts.json`, `statusline-scoped-limits.cache.json`) contain
+  token counts, dollar totals, quota percentages, and organization UUIDs. The
+  UUIDs are not secrets per se, but they identify your Claude org; redact
+  them if you're posting cache output publicly.
 
 ## Reporting a vulnerability
 

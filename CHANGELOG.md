@@ -8,6 +8,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 _Nothing yet._
 
+## [0.5.0] - 2026-08-01
+
+### Added
+
+- **Fable 5 weekly limit.** Claude Code meters its premium models on a weekly window separate from the plan-wide weekly limit — `/usage` draws it as its own bar, and internally it is the `seven_day_overage_included` bucket, labelled "Fable 5 limit". Exhausting it takes Fable off the table for the rest of the week while the ordinary weekly limit still has headroom, which is precisely the state worth seeing coming.
+
+  ```
+  7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am)
+  ```
+
+  **It is not in the hook payload, and cannot be made to be.** Claude Code builds the status line's `rate_limits` object from `five_hour` and `seven_day` alone. The Fable window, `seven_day_opus` and `seven_day_sonnet` are all live in the same process — parsed off the `anthropic-ratelimit-unified-*` response headers — and none of them are forwarded. That is why no status line shows this number, this one included until now.
+
+  It is fetched instead from `GET /api/oauth/usage`, the endpoint `/usage` itself reads, where the window arrives as a `limits[]` entry with `kind: "weekly_scoped"` and `scope.model.display_name`. The segment is built from whatever scoped windows the account actually has rather than a hardcoded "Fable", so a second one appearing server-side renders without a code change, and an account with none renders nothing at all.
+
+  **The render path still makes no network call.** It reads a small cache file; when that cache passes its TTL the render spawns a *detached* copy of the script to do the fetch, and the result lands on the next render. Blocking the status line on HTTP would stall the prompt on every miss, and a seven-day window does not move fast enough for the extra interval to be visible. Measured: renders stay flat, and the fetch adds nothing to them.
+
+  The spawn is guarded by an atomically created lock file (`File.Open` with `CreateNew`), so ten Claude Code windows re-rendering on their own schedules produce one request per interval between them rather than ten. A lock orphaned by a killed process is cleared after 120 seconds by the render that finds it, and the *next* render takes it cleanly — recovery stays off the hot path.
+
+  **The interval is 15 minutes, not 5, and failures back off.** The endpoint rate-limits — discovered the direct way, by earning a 429 during development — and Claude Code polls it too, so an over-eager status line can land a 429 on the user's own `/usage` command. On a seven-day window a tighter interval buys precision nobody can act on. Consecutive failed requests double the interval to a one-hour ceiling and a success resets it, so an outage is not answered by knocking every fifteen minutes indefinitely. Only requests that actually reached the network count; the short-circuit paths (expired token, no credentials file) cost the endpoint nothing and retry normally.
+
+  Staleness degrades honestly rather than silently: a percentage that has not refreshed in three hours renders `--%` instead of passing an old number off as current. Three rather than one, because the backoff can legitimately stretch to hourly retries and a gate tighter than the retry interval would blank a number that is merely waiting rather than wrong. The reset countdown deliberately survives that gate, on the same reasoning as the cached `resets7d` fallback — a weekly reset timestamp stays true for days, and elapsed values are dropped anyway. The cache is account-scoped like every other window here, so a switch discards it and refetches instead of replaying the previous org's percentage.
+
+  Credential handling: the OAuth access token is read from `~/.claude/.credentials.json`, held in memory for the request, and never logged, printed, or written to the cache — `~/.claude/statusline-scoped-limits.cache.json` carries percentages and timestamps only, and the failure path deliberately logs no response body, since an auth failure can echo the request headers back. An expired token short-circuits before any request is made; refreshing it is Claude Code's job, and racing it on the refresh endpoint could invalidate the live session. Where credentials live in an OS keychain rather than that file, the segment stays hidden — no prompt, no keychain access.
+
+- **`STATUSLINE_SCOPED_LIMITS=0`** (`off` / `false` / `no`) disables the segment, the cache read and the network call in one switch, and **`STATUSLINE_SCOPED_TTL`** sets the refresh interval in seconds (default `900`).
+
+### Changed
+
+- **The README's "No network calls, no telemetry" claim is now accurate again.** It was a headline feature and this release breaks half of it, so the bullet says what is actually true: no telemetry and no third parties, one endpoint of Anthropic's own, off the render path, and one environment variable back to fully local. Quietly leaving the old wording in place would have been the worst version of this change.
+
 ## [0.4.1] - 2026-07-29
 
 ### Added

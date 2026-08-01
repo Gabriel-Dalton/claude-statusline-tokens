@@ -2,10 +2,10 @@
 
 # claude-statusline-tokens
 
-**A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows AND your current work session, with multi-account awareness.**
+**A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows, your Fable 5 weekly limit, AND your current work session, with multi-account awareness.**
 
 ```
-my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | session 850k ($3.40) | ctx 23k (2%)
+my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am) | session 850k ($3.40) | ctx 23k (2%)
 ```
 
 [Install](#install) · [How it works](docs/ARCHITECTURE.md) · [Pricing math](docs/PRICING.md) · [Multi-account](docs/MULTI-ACCOUNT.md) · [Customize](docs/CUSTOMIZE.md) · [Contributing](CONTRIBUTING.md)
@@ -29,6 +29,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 
 - **Color-coded headroom** — the 5h and 7d percentages tint **green** (< 50%), **yellow** (50–79%), **red** (≥ 80%) so a glance tells you where you stand. Tweak the bands with `STATUSLINE_PCT_THRESHOLDS=warn,crit` (e.g. `STATUSLINE_PCT_THRESHOLDS=65,85`)
 - **Percentage + tokens + $ in one line** for both the 5h block and the 7d weekly limit
+- **Fable 5 weekly limit** — the separate weekly quota Claude Code meters premium models on, which it tracks internally but **does not send to the status line hook**. This is the only status line that shows it. See [Fable 5 weekly limit](#fable-5-weekly-limit)
 - **Reset countdown** on both windows — `resets 2h14m @ 12:38pm` — so you know whether to push on or take a break. Immune to DST, and it survives renders where Claude Code omits the field
 - **Context fill %** from `context_window.used_percentage` — a raw `ctx 63.0k` reads like a third of a 200k window but is 6% of a 1M one, so the percentage is the only signal that means the same thing on every model
 - **Verify the numbers yourself** with [`scripts/verify-tokens.ps1`](scripts/verify-tokens.ps1) — an independent re-derivation that cross-checks the status line's own arithmetic
@@ -39,7 +40,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **Regex-based scan** of `.jsonl` transcripts — ~10× faster than `ConvertFrom-Json` per line on a 20MB+ pile
 - **20-second on-disk result cache** keyed by current account so switches auto-invalidate
 - **Zero dependencies** beyond PowerShell 5.1 (ships with Windows 10/11) and `git` (for the branch name)
-- **No network calls, no telemetry** — everything reads from your local `~/.claude` directory
+- **No telemetry, no third parties.** Every segment but one reads only your local `~/.claude` directory. The exception is the Fable 5 limit, which is not in any local file — that polls Anthropic's own usage endpoint every 15 minutes, off the render path, and switches off with `STATUSLINE_SCOPED_LIMITS=0`
 - **Loop watch** in the dashboard — flags an agent stuck repeating the same tool calls while burning tokens, using repetition rather than cost-anomaly detection. See [Loop watch](#loop-watch)
 - **Live dashboard companion** — `claude-dashboard.ps1` opens a full-screen, re-rendering view of the same numbers plus a per-project table, opus/sonnet/haiku split, and a 24-hour activity sparkline. See [Dashboard](#dashboard) below.
 
@@ -385,6 +386,7 @@ Then edit `~/.claude/settings.json` and remove the `statusLine` block.
 | model | `model.display_name` from the hook JSON | purple | — |
 | **5h % + tokens + $ + reset** | native `rate_limits.five_hour` for the % and reset time; transcript scan for tokens and cost | cyan, % shifts green/yellow/red | **current account** |
 | **7d % + tokens + $ + reset** | native `rate_limits.seven_day` for the % and reset time; transcript scan for tokens and cost | green, % shifts green/yellow/red | **current account** |
+| **fable % + reset** | `GET /api/oauth/usage`, refreshed every 15 min off the render path — the hook does not carry this window | orchid, % shifts green/yellow/red | **current account** |
 | **session tokens + $** | contiguous activity, walking back until a 30-minute gap | gold | **every account in the burst** |
 | ctx | tokens in the live context, plus fill % from `context_window.used_percentage` when the hook supplies it | blue | — |
 
@@ -408,6 +410,42 @@ Three details worth knowing:
 - **Timezone-independent.** Every instant is held as UTC internally and converted to local time only at render, using the OS timezone database. The "time left" figure is a UTC-to-UTC delta, so a DST change can't skew it, and the wall-clock time resolves the offset for that specific instant — a reset landing on the far side of a DST boundary prints correctly rather than an hour off.
 
 > The `5h` and `7d` numbers are scoped to your **current Claude account**, so they always match the percentage Claude Code itself is showing you. The `session` number tracks your **current burst of work** independent of which account is signed in — so a mid-day account switch (or the clock crossing midnight in the middle of a coding session) doesn't fragment it. Read [`docs/SESSION.md`](docs/SESSION.md) and [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md) for the full models.
+
+### Fable 5 weekly limit
+
+Claude Code meters its premium models on a **separate weekly window** from your plan-wide weekly limit. Run `/usage` and you'll see it as its own bar; internally Claude Code calls that bucket `seven_day_overage_included` and labels it "Fable 5 limit". Burn through it and Fable stops being available for the rest of the week while your ordinary weekly limit still has room — which is exactly the situation you want warning of in advance.
+
+```
+7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am)
+```
+
+**The status line hook cannot see this number.** Claude Code assembles the hook payload from two buckets only:
+
+```js
+rate_limits = { ...five_hour && {five_hour}, ...seven_day && {seven_day} }
+```
+
+`seven_day_opus`, `seven_day_sonnet` and the Fable bucket are all tracked in the same process — parsed straight off the `anthropic-ratelimit-unified-*` response headers — and none of them are forwarded. No amount of parsing the hook JSON will surface it, which is why no other status line shows it.
+
+So this one fetches it, the same way `/usage` does:
+
+- **`GET /api/oauth/usage`**, where the window arrives as a `limits[]` entry with `kind: "weekly_scoped"` and `scope.model.display_name`. Any scoped weekly window your account has gets its own segment, so if Anthropic adds a second one it appears without a code change.
+- **Never on the render path.** The render reads a small cache file and nothing else. When that cache passes its TTL, the render spawns a *detached* copy of the script to do the fetch, and the result lands on the next render. A status line that blocked on HTTP would stall your prompt.
+- **One fetch across every open window.** The spawn is guarded by an atomically-created lock file, so ten Claude Code windows re-rendering independently still produce one request per interval. A lock orphaned by a killed process is cleared after 120 seconds.
+- **Backs off when the endpoint says no.** The usage endpoint rate-limits, and Claude Code polls it too. Consecutive failed requests double the interval up to an hour, so a 429 or an outage isn't answered by knocking every fifteen minutes indefinitely. A success resets the counter; the short-circuit paths that never reach the network (expired token, no credentials file) don't count against it.
+- **Stale data degrades honestly.** A percentage that hasn't refreshed in three hours renders `--%` rather than presenting an old number as current — three rather than one, so a value that's merely waiting on the backoff isn't blanked as though it were wrong. The reset countdown survives that gate, because a weekly reset timestamp stays true for days.
+- **Account-scoped like every other window.** The cache records the org it belongs to; switching accounts discards it and refetches rather than replaying the previous account's percentage.
+
+#### What it touches, and how to turn it off
+
+The OAuth access token is read from `~/.claude/.credentials.json` (the file Claude Code already keeps there), held in memory for the duration of the request, and **never logged, printed, or written to the cache** — `~/.claude/statusline-scoped-limits.cache.json` holds percentages and timestamps only. An expired token short-circuits before any request is made; refreshing it is Claude Code's job, and racing it there could invalidate your live session. Where Claude Code stores credentials in an OS keychain instead of that file, the segment simply stays hidden — no prompt, no keychain access.
+
+| Variable | Effect |
+|---|---|
+| `STATUSLINE_SCOPED_LIMITS=0` | Disables the segment, the cache read, and the network call entirely (`off` / `false` / `no` also work) |
+| `STATUSLINE_SCOPED_TTL=1800` | Seconds between refreshes; default `900` |
+
+With `STATUSLINE_SCOPED_LIMITS=0` the script makes no network calls at all, which is where it stood before this feature.
 
 ## Pricing at a glance
 

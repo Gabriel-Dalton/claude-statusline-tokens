@@ -64,6 +64,23 @@ $cacheTtlSec = 20
 
 Lower = fresher numbers, slower renders during bursts. Higher = snappier, staler. Set to `0` to disable caching entirely. The cache file is at `~/.claude/statusline-tokens.cache.json`; delete it to force a fresh scan once.
 
+## Fable 5 weekly limit
+
+Two environment variables, both read at render time — no edit to the script needed:
+
+```powershell
+$env:STATUSLINE_SCOPED_LIMITS = '0'    # off | false | no also work
+$env:STATUSLINE_SCOPED_TTL    = '1800' # seconds between refreshes; default 900
+```
+
+`STATUSLINE_SCOPED_LIMITS=0` removes the `fable` segment and, more to the point, stops the script making any network request at all — the cache read and the detached refresh are skipped with it. Use it if you'd rather the status line stay entirely local.
+
+`STATUSLINE_SCOPED_TTL` sets how often the detached child refetches. The refresh never blocks a render, so raising it costs you nothing but freshness on a window that moves over days. Lowering it is the riskier direction: the endpoint rate-limits and Claude Code polls it too, so a tight interval mostly buys you 429s — which then trigger the backoff and leave you *less* fresh than the default would have.
+
+On consecutive failed requests the interval doubles, capped at an hour, and resets to `STATUSLINE_SCOPED_TTL` on the next success. The failure count is the `failures` field in the cache file.
+
+The cache lives at `~/.claude/statusline-scoped-limits.cache.json` and the spawn guard at `~/.claude/statusline-scoped-limits.lock`. Delete the cache to force a refetch on the next render. If the segment is showing `--%`, the cache is over three hours stale — usually an expired OAuth token, which resolves itself once Claude Code renews it.
+
 ## Token format
 
 ```powershell

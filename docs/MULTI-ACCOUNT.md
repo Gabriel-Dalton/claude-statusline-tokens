@@ -34,7 +34,7 @@ This script reads only the `oauthAccount` sub-object (via a brace-walk — see "
 
 - It survives token refreshes (the access token rotates; the UUID doesn't).
 - It only changes when you actually switch to a different account or workspace.
-- It never leaves your machine — the script doesn't make network calls.
+- It never leaves your machine. The one request the script makes (the Fable 5 weekly quota, see the README) is authenticated with the OAuth token Claude Code already holds and carries no identifier of its own; the UUID is used locally, to scope each cache to the account it belongs to.
 
 `emailAddress` and `organizationName` are read for display purposes only (currently only the UUID is used in the line; email/name are stored in the checkpoints file for your reference).
 

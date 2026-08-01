@@ -60,10 +60,15 @@ A compact explainer for contributors and anyone curious about the implementation
 | `~/.claude/projects/**/*.jsonl` | ✓ (filtered to mtime > 7d ago) | — |
 | `~/.claude/statusline-accounts.json` | ✓ | ✓ (append-only on account switch) |
 | `~/.claude/statusline-tokens.cache.json` | ✓ | ✓ |
+| `~/.claude/statusline-scoped-limits.cache.json` | ✓ | ✓ (by the detached refresh child only) |
+| `~/.claude/statusline-scoped-limits.lock` | ✓ | ✓ (spawn guard; created and removed) |
+| `~/.claude/.credentials.json` | ✓ (refresh child only — `claudeAiOauth.accessToken`, held in memory for one request) | — |
 | `stdout` | — | ✓ (final colored line) |
 | `$cwd/.git` | ✓ (via `git rev-parse`) | — |
 
-Nothing else is touched — no network calls, no temp files, no environment mutations.
+Nothing else is touched — no temp files, no environment mutations.
+
+**One network call, and never on the render path.** The render itself reads files only. The per-model weekly quota (Fable 5) is not present in any local file and is not carried by the hook, so a *detached child process* fetches it from `GET /api/oauth/usage` when the cache passes its TTL, and the result is picked up by a later render. Disable it — segment, cache read and request together — with `STATUSLINE_SCOPED_LIMITS=0`, which restores fully-local operation.
 
 ## The hook stdin JSON
 

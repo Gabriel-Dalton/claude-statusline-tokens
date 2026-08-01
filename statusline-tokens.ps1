@@ -4,6 +4,13 @@
 # by Claude Code on stdin. Tokens are summed from ~/.claude/projects/**/*.jsonl
 # entries whose timestamps fall inside the rolling 5h / 7d window.
 
+param(
+    # Set only on the detached child this script spawns to refresh the
+    # per-model weekly quota out of band. See the scoped-limits block below.
+    [switch]$RefreshScopedLimits,
+    [string]$OrgKey = ''
+)
+
 [System.Threading.Thread]::CurrentThread.CurrentCulture =
     [System.Globalization.CultureInfo]::InvariantCulture
 
@@ -139,6 +146,212 @@ function Get-HookField {
         return $Fallback
     }
     return $node
+}
+
+# Cross-platform user profile resolution. [Environment]::GetFolderPath
+# returns "" rather than $null on non-Windows when the folder is unknown,
+# so we explicitly fall through. $HOME is set by PowerShell on all
+# platforms; $env:USERPROFILE is Windows-only and kept as a last resort.
+# Resolved this early because the scoped-limits child below runs before the
+# stdin read and needs the same paths the render path uses.
+$userProfile = [Environment]::GetFolderPath('UserProfile')
+if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $HOME }
+if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
+
+# --- per-model weekly quota (Fable) ---------------------------------------
+# Claude Code meters its premium models on their own weekly window — today
+# Fable 5, which it tracks internally as 'seven_day_overage_included' and
+# labels "Fable 5 limit". It does NOT forward that bucket on the status line
+# hook: the payload it builds carries five_hour and seven_day and nothing
+# else, so there is no field to read no matter how the hook JSON is parsed.
+#
+# The number is only reachable from GET /api/oauth/usage — the same endpoint
+# /usage draws its bars from — where it arrives as a limits[] entry with
+# kind 'weekly_scoped' and scope.model.display_name set to the model.
+#
+# So this script fetches it itself, out of band, in two halves:
+#   * the render path NEVER makes a network call; it reads a cache file
+#   * when that cache is older than $scopedTtlSec, the render spawns a
+#     detached copy of this same script with -RefreshScopedLimits, which
+#     does the fetch and rewrites the cache for the *next* render
+# A status line that blocked on HTTP would violate the "always print
+# something fast" contract the bounded stdin read below exists to protect,
+# so the value shown is always up to one refresh interval behind. For a
+# seven-day window that is invisible.
+#
+# Credential handling: the OAuth access token is read from
+# ~/.claude/.credentials.json into memory for the duration of the request
+# and is never logged, printed, or written to the cache — the cache holds
+# only percentages and reset timestamps. An expired token short-circuits
+# before any request is made. Refreshing it is Claude Code's job, not ours:
+# racing it on the refresh endpoint could invalidate the live session.
+# On platforms where Claude Code keeps credentials in an OS keychain rather
+# than that file (macOS), the file is simply absent and the segment stays
+# hidden — no prompt, no keychain access, no error surfaced to the user.
+$scopedCachePath = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.cache.json')
+$scopedLockPath  = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.lock')
+
+function Get-ScopedLimitsPayload([string]$CachePath, [string]$Org) {
+    # Seed from whatever is already on disk so a failed refresh keeps the
+    # last good numbers instead of blanking the segment. A cache belonging
+    # to a different org is discarded outright — quota windows are
+    # per-account, and replaying another account's percentage is a
+    # confident lie rather than a stale truth.
+    $payload = @{
+        attemptedAtUtc = [DateTime]::UtcNow.ToString('o')
+        orgKey         = $Org
+        status         = 'error'
+        limits         = @()
+        failures       = 0
+    }
+    try {
+        if (Test-Path $CachePath) {
+            $prev = Get-Content -Raw -LiteralPath $CachePath | ConvertFrom-Json
+            if ([string]$prev.orgKey -eq $Org) {
+                if ($prev.fetchedAtUtc) { $payload.fetchedAtUtc = [string]$prev.fetchedAtUtc }
+                if ($prev.PSObject.Properties.Match('failures').Count -gt 0) {
+                    $payload.failures = [int]$prev.failures
+                }
+                $payload.limits = @(@($prev.limits) | Where-Object { $_ } | ForEach-Object {
+                    @{ name = [string]$_.name; percent = [double]$_.percent; resetsAt = [string]$_.resetsAt }
+                })
+            }
+        }
+    } catch { Write-DebugLog $_ -Scope 'scoped-cache-read' }
+
+    $credPath = [System.IO.Path]::Combine($userProfile, '.claude', '.credentials.json')
+    if (-not (Test-Path $credPath)) { $payload.status = 'no-credentials'; return $payload }
+
+    $token = $null
+    try {
+        $oauth = (Get-Content -Raw -LiteralPath $credPath | ConvertFrom-Json).claudeAiOauth
+        if ($null -eq $oauth) { $payload.status = 'no-credentials'; return $payload }
+        # expiresAt is Unix milliseconds. Firing a request we already know
+        # will 401 just burns a round trip and adds auth noise on the
+        # account; Claude Code refreshes the token on its own schedule and
+        # the next render picks it up.
+        if ($oauth.expiresAt) {
+            $expUtc = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$oauth.expiresAt).UtcDateTime
+            if ($expUtc -le [DateTime]::UtcNow) { $payload.status = 'token-expired'; return $payload }
+        }
+        $token = [string]$oauth.accessToken
+    } catch {
+        Write-DebugLog $_ -Scope 'scoped-credentials'
+        $payload.status = 'credentials-unreadable'
+        return $payload
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) { $payload.status = 'no-token'; return $payload }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $resp = Invoke-RestMethod -Uri 'https://api.anthropic.com/api/oauth/usage' `
+            -Method Get -TimeoutSec 10 -Headers @{
+                'Authorization'  = "Bearer $token"
+                'anthropic-beta' = 'oauth-2025-04-20'
+                'Content-Type'   = 'application/json'
+            }
+    } catch {
+        # Deliberately logged without the exception's response body: an auth
+        # failure can echo request headers, and the token is one of them.
+        Write-DebugLog "usage endpoint request failed" -Scope 'scoped-fetch'
+        $payload.status = 'request-failed'
+        # Only a request that actually went out counts toward the backoff.
+        # The short-circuit paths above (expired token, no credentials file)
+        # cost the endpoint nothing, so they retry on the normal interval.
+        $payload.failures = [Math]::Min($payload.failures + 1, 6)
+        return $payload
+    } finally { $token = $null }
+
+    # limits[] holds one entry per bar /usage draws. 'session' and
+    # 'weekly_all' duplicate what the hook already gives us; the per-model
+    # bars are the 'weekly_scoped' ones, identified by scope.model.
+    # display_name ('Fable' today). Anything else is ignored, so a new bar
+    # appearing server-side can't corrupt the segment.
+    $found = @()
+    foreach ($lim in @($resp.limits)) {
+        if ([string]$lim.kind -ne 'weekly_scoped') { continue }
+        $name = [string]$lim.scope.model.display_name
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $found += @{
+            name     = $name
+            percent  = [double]$lim.percent
+            resetsAt = [string]$lim.resets_at
+        }
+    }
+    $payload.limits       = $found
+    $payload.fetchedAtUtc = [DateTime]::UtcNow.ToString('o')
+    $payload.status       = 'ok'
+    $payload.failures     = 0
+    return $payload
+}
+
+# Child entry point. Runs before the stdin read on purpose: the detached
+# process has no hook JSON to wait on, it would otherwise burn the 200 ms
+# stdin budget and print the "no hook input" fallback, and this branch must
+# never fall through into the render path.
+if ($RefreshScopedLimits) {
+    $payload = Get-ScopedLimitsPayload $scopedCachePath $OrgKey
+    try {
+        $body = $payload | ConvertTo-Json -Compress -Depth 5 -ErrorAction Stop
+        [System.IO.File]::WriteAllText($scopedCachePath, $body, (New-Object System.Text.UTF8Encoding($false)))
+    } catch { Write-DebugLog $_ -Scope 'scoped-cache-write' }
+    try {
+        Remove-Item -LiteralPath $scopedLockPath -Force -ErrorAction SilentlyContinue
+    } catch { Write-DebugLog $_ -Scope 'scoped-lock-release' }
+    exit 0
+}
+
+# Named Request- rather than Start-: it asks for a refresh and frequently
+# declines to do one (another window holds the lock, the TTL has not
+# elapsed). Start- would also promise ShouldProcess support that a status
+# line has no way to honour.
+function Request-ScopedLimitsRefresh([string]$ScriptPath, [string]$LockPath, [string]$Org) {
+    if ([string]::IsNullOrWhiteSpace($ScriptPath) -or -not (Test-Path $ScriptPath)) { return }
+    # CreateNew is the atomic part: with several Claude Code windows open,
+    # every one of them re-renders on its own schedule, and exactly one
+    # wins this race and spawns the fetch. A lock left behind by a killed
+    # child would otherwise wedge refreshes forever, so one older than
+    # $lockStaleSec is cleared — this render then skips and the next takes
+    # the lock cleanly, which keeps the recovery path off the hot path.
+    $lockStaleSec = 120
+    try {
+        if (Test-Path $LockPath) {
+            $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $LockPath).LastWriteTimeUtc).TotalSeconds
+            if ($lockAge -gt $lockStaleSec) {
+                Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+            }
+            return
+        }
+        $fs = [System.IO.File]::Open($LockPath, [System.IO.FileMode]::CreateNew,
+                                     [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $fs.Close()
+    } catch { return }
+
+    try {
+        # Reuse whichever host is already running this script rather than
+        # assuming one is on PATH. $IsWindows is undefined on 5.1, where the
+        # PSEdition test short-circuits before it is read.
+        $exe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { 'pwsh' } else { 'powershell.exe' }
+        try {
+            $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        } catch { Write-DebugLog $_ -Scope 'scoped-host-path' }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName  = $exe
+        $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -RefreshScopedLimits -OrgKey "{1}"' -f $ScriptPath, $Org
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow  = $true
+        # The child must not inherit this process's stdout: a single stray
+        # byte from it would land in the middle of the rendered status line.
+        $psi.RedirectStandardInput  = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        [void][System.Diagnostics.Process]::Start($psi)
+    } catch {
+        Write-DebugLog $_ -Scope 'scoped-spawn'
+        try {
+            Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+        } catch { Write-DebugLog $_ -Scope 'scoped-lock-release' }
+    }
 }
 
 # Without this, non-ASCII glyphs like ⎇ ✱ get downgraded to '?' by the
@@ -407,14 +620,9 @@ $tok5h      = [long]0; $cost5h      = 0.0
 $tok7d      = [long]0; $cost7d      = 0.0
 $tokSession = [long]0; $costSession = 0.0   # all accounts contributing to the current burst
 
-# Cross-platform user profile resolution. [Environment]::GetFolderPath
-# returns "" rather than $null on non-Windows when the folder is unknown,
-# so we explicitly fall through. $HOME is set by PowerShell on all
-# platforms; $env:USERPROFILE is Windows-only and kept as a last resort.
-$userProfile = [Environment]::GetFolderPath('UserProfile')
-if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $HOME }
-if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
-
+# $userProfile is resolved near the top of the script, before the stdin
+# read, because the scoped-limits child needs it there too.
+#
 # [IO.Path]::Combine handles per-OS separators and works in PS 5.1
 # (whose Join-Path is two-arg only) as well as pwsh 7.
 $projectsDir       = [System.IO.Path]::Combine($userProfile, '.claude', 'projects')
@@ -989,6 +1197,61 @@ try {
     [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
 } catch { Write-DebugLog $_ -Scope 'cache-write' }
 
+# --- per-model weekly quota: read cache, refresh out of band --------------
+# Read side of the block defined near the top of the script. Costs one small
+# file read per render; the network call happens in a detached child, and
+# only when the cache has aged past the TTL.
+$scopedLimits     = @()
+$scopedFetchedUtc = $null
+$scopedAttempted  = $null
+$scopedFailures   = 0
+
+# This is the one part of the status line that leaves the machine, so it is
+# switchable off in one place: STATUSLINE_SCOPED_LIMITS=0 (or off/false/no)
+# skips the cache read, the spawn, and the segment entirely, restoring the
+# fully local behavior everything else here still has.
+$scopedEnabled = -not ($env:STATUSLINE_SCOPED_LIMITS -match '^(0|off|false|no)$')
+
+if ($scopedEnabled -and (Test-Path $scopedCachePath)) {
+    try {
+        $sc = Get-Content -Raw -LiteralPath $scopedCachePath | ConvertFrom-Json
+        # An account switch invalidates both the numbers and the refresh
+        # timer: leaving $scopedAttempted null forces an immediate refetch
+        # for the org now signed in.
+        if ([string]$sc.orgKey -eq $currentOrgKey) {
+            $scopedFetchedUtc = ConvertTo-ResetUtc $sc.fetchedAtUtc
+            $scopedAttempted  = ConvertTo-ResetUtc $sc.attemptedAtUtc
+            $scopedLimits     = @(@($sc.limits) | Where-Object { $_ })
+            if ($sc.PSObject.Properties.Match('failures').Count -gt 0) {
+                $scopedFailures = [int]$sc.failures
+            }
+        }
+    } catch { Write-DebugLog $_ -Scope 'scoped-cache-read' }
+}
+
+# 15 minutes. The endpoint rate-limits, and Claude Code polls it too — this
+# is a seven-day window, so a tighter interval buys precision no one can use
+# while making it likelier that a 429 lands on the user's own /usage command.
+# Override with the STATUSLINE_SCOPED_TTL env var (seconds).
+$scopedTtlSec = 900
+if ($env:STATUSLINE_SCOPED_TTL -match '^\d+$') { $scopedTtlSec = [int]$env:STATUSLINE_SCOPED_TTL }
+
+# Exponential backoff on consecutive failed requests, capped at an hour, so a
+# 429 or an outage is not answered by knocking every interval indefinitely.
+# Only requests that actually reached the network increment the counter; a
+# success resets it to zero.
+$scopedInterval = $scopedTtlSec
+if ($scopedFailures -gt 0) {
+    $scopedInterval = [Math]::Min($scopedTtlSec * [Math]::Pow(2, $scopedFailures), 3600)
+}
+$scopedAge = [double]::MaxValue
+if ($null -ne $scopedAttempted) { $scopedAge = ($nowUtc - $scopedAttempted).TotalSeconds }
+# A negative age means the stamp is in the future — a clock change, not a
+# fresh fetch — so treat it as stale rather than trusting it indefinitely.
+if ($scopedEnabled -and ($scopedAge -lt 0 -or $scopedAge -ge $scopedInterval)) {
+    Request-ScopedLimitsRefresh $PSCommandPath $scopedLockPath $currentOrgKey
+}
+
 # --- context tokens: last usage block in the current session transcript --
 # Fast path (M1-04): the projects-dir scan already captured the last
 # assistant usage line for every transcript it processed. Reuse it
@@ -1110,6 +1373,7 @@ $fgGit = "$esc[38;5;180m"
 $fgMod = "$esc[38;5;141m"
 $fg5h      = "$esc[38;5;81m"
 $fg7d      = "$esc[38;5;108m"
+$fgScoped  = "$esc[38;5;176m"   # per-model weekly quota, e.g. Fable (orchid)
 $fgSession = "$esc[38;5;178m"   # current work-burst, every account (gold)
 $fgCtx     = "$esc[38;5;110m"
 
@@ -1185,6 +1449,42 @@ $p5Tinted = "$pct5Color$p5$reset$fg5h"
 $p7Tinted = "$pct7Color$p7$reset$fg7d"
 $parts += (Color $fg5h      ("5h {0} ({1})" -f $p5Tinted, $body5h))
 $parts += (Color $fg7d      ("7d {0} ({1})" -f $p7Tinted, $body7d))
+
+# Per-model weekly quota — today that is Fable 5, which Claude Code meters
+# separately from the plan-wide weekly limit above. One segment per bar the
+# account actually has, so an account without a scoped limit renders nothing
+# rather than an empty placeholder.
+#
+# Freshness gate: a percentage we have not been able to refresh for three
+# hours degrades to '--%' instead of presenting a stale number as current.
+# Three rather than one, because the failure backoff above can legitimately
+# stretch to hourly retries — a gate tighter than the retry interval would
+# blank a number that is merely waiting, not wrong. Three consecutive failed
+# hours is a real fault worth showing.
+#
+# The reset countdown deliberately survives that gate — a weekly reset
+# timestamp stays true for days, the same reasoning the cached resets7d
+# fallback rests on, and Fmt-Reset drops it once it has elapsed.
+$scopedMaxAgeSec = 10800
+foreach ($lim in $scopedLimits) {
+    $scopedName = [string]$lim.name
+    if ([string]::IsNullOrWhiteSpace($scopedName)) { continue }
+    $pScoped = $loading
+    $pScopedColor = $fgScoped
+    if ($null -ne $scopedFetchedUtc) {
+        $fetchAge = ($nowUtc - $scopedFetchedUtc).TotalSeconds
+        if ($fetchAge -ge 0 -and $fetchAge -lt $scopedMaxAgeSec) {
+            $pScoped = '{0}%' -f [int][math]::Round([double]$lim.percent, 0, [MidpointRounding]::AwayFromZero)
+            $pScopedColor = Get-PctColor $lim.percent
+        }
+    }
+    $bodyScoped = ''
+    $rScoped = Fmt-Reset $lim.resetsAt $true
+    if ($rScoped) { $bodyScoped = ' (resets {0})' -f $rScoped }
+    $pScopedTinted = "$pScopedColor$pScoped$reset$fgScoped"
+    $parts += (Color $fgScoped ('{0} {1}{2}' -f $scopedName.ToLowerInvariant(), $pScopedTinted, $bodyScoped))
+}
+
 $parts += (Color $fgSession ("session {0} ({1})"     -f       (Fmt-Tokens $tokSession), (Fmt-Cost $costSession)))
 # "ctx 63.0k (6%)" when the hook supplies the fill percentage, "ctx 63.0k"
 # when it doesn't. Explicit $null test, not truthiness: a genuine 0% is

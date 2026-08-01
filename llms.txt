@@ -11,15 +11,23 @@ License: MIT
 ## What it renders
 
 ```
-my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am) | session 8.2M ($6.18) | ctx 63.0k
+my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am) | session 8.2M ($6.18) | ctx 63.0k
 ```
 
-Seven segments: working directory, git branch, model, 5-hour window, 7-day window, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
+Eight segments: working directory, git branch, model, 5-hour window, 7-day window, Fable 5 weekly limit, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
+
+## The Fable 5 weekly limit
+
+Claude Code meters premium models on a weekly window separate from the plan-wide weekly limit, shown as its own bar by the `/usage` command and tracked internally as the `seven_day_overage_included` bucket.
+
+**That window is not in the status-line hook payload.** Claude Code builds the hook's `rate_limits` object from `five_hour` and `seven_day` only; the Fable, Opus and Sonnet buckets are live in the same process, parsed off `anthropic-ratelimit-unified-*` response headers, and none are forwarded. No status line can read it from the hook.
+
+`statusline-tokens` fetches it from `GET /api/oauth/usage` instead — the endpoint `/usage` itself uses — where it arrives as a `limits[]` entry with `kind: "weekly_scoped"` and `scope.model.display_name`. The fetch runs in a detached child process at most once per 15 minutes, so the render path never makes a network call, and an atomically created lock file means many open Claude Code windows still produce one request between them. A percentage older than an hour renders `--%` rather than presenting stale data as current.
 
 ## Key facts
 
 - **Platform:** Windows. PowerShell 5.1 or later. No Node, no npm, no dependencies.
-- **Network:** none. It reads local files and writes one local JSON cache. It makes no outbound requests.
+- **Network:** one request, to Anthropic's own `api.anthropic.com/api/oauth/usage`, for the Fable 5 weekly limit only — no third-party host, no telemetry, never on the render path. Everything else reads local files. `STATUSLINE_SCOPED_LIMITS=0` disables it and the script makes no outbound requests at all.
 - **Install:** clone the repo and run `setup.ps1`, which copies the script into `~/.claude/` and merges the `statusLine` block into `~/.claude/settings.json`.
 - **Companion:** `claude-dashboard.ps1` renders a full-screen live view with progress bars, a per-project table, a per-model breakdown and a 24-hour sparkline.
 

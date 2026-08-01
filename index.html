@@ -63,6 +63,7 @@
       "author": { "@type": "Person", "name": "Gabriel Dalton" },
       "featureList": [
         "Token totals for the 5-hour and 7-day rate-limit windows",
+        "Fable 5 weekly limit, which Claude Code does not send to the status line hook",
         "API-equivalent dollar cost, priced per turn per model",
         "Countdown to when each rate-limit window resets",
         "Percentage colour-shifts green to yellow to red as headroom disappears",
@@ -100,6 +101,14 @@
         },
         {
           "@type": "Question",
+          "name": "How do I see my Fable 5 weekly limit in Claude Code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Claude Code meters premium models on a weekly window separate from the plan-wide weekly limit, shown as its own bar in /usage. It is not included in the status line hook payload, which carries only the five_hour and seven_day buckets, so no status line can read it from the hook. statusline-tokens fetches it from the same endpoint /usage uses, where it arrives as a weekly_scoped entry, refreshes it every 15 minutes in a detached process so the render never waits on the network, and shows it as a 'fable 61%' segment with its own reset countdown."
+          }
+        },
+        {
+          "@type": "Question",
           "name": "When does the Claude Code 5-hour limit reset?",
           "acceptedAnswer": {
             "@type": "Answer",
@@ -127,7 +136,7 @@
           "name": "Does it send my data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. It makes no network calls. It reads transcript files that already exist on disk and writes one small JSON cache next to them. It is a single PowerShell file you can read end to end, MIT licensed."
+            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable 5 weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed."
           }
         }
       ]
@@ -482,6 +491,7 @@ h1.headline .accent { color: var(--accent); }
 .statusline .seg-mod   { color: #af87ff; } /* ANSI 141 */
 .statusline .seg-5h    { color: #5fd7ff; } /* ANSI 81  */
 .statusline .seg-7d    { color: #87af87; } /* ANSI 108 */
+.statusline .seg-fab   { color: #d787d7; } /* ANSI 176 */
 .statusline .seg-ses   { color: #d7af00; } /* ANSI 178 */
 .statusline .seg-ctx   { color: #87afd7; } /* ANSI 110 */
 .statusline .seg-sep   { color: #8a8a8a; padding: 0 6px; } /* ANSI 245 */
@@ -1098,12 +1108,13 @@ h1.headline .accent { color: var(--accent); }
     <a class="brand" href="./">
       <span class="mark">›</span>
       <span class="name">statusline-tokens</span>
-      <span class="tag">v0.4.1</span>
+      <span class="tag">v0.5.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#headroom">Headroom</a>
       <a href="#anatomy">Anatomy</a>
+      <a href="#fable">Fable&nbsp;5</a>
       <a href="#install">Install</a>
       <a href="#methodology">Methodology</a>
       <a href="#faq">FAQ</a>
@@ -1128,7 +1139,7 @@ h1.headline .accent { color: var(--accent); }
     </h1>
 
     <p class="lede">
-      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath &mdash; raw tokens and API-priced cost for the rolling 5-hour and 7-day windows.
+      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath &mdash; raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable&nbsp;5 weekly limit</a> Claude Code never sends to a status line at all.
     </p>
 
     <div class="cta">
@@ -1142,7 +1153,7 @@ h1.headline .accent { color: var(--accent); }
       </a>
     </div>
 
-    <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, and current context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green.">
+    <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, the Fable 5 weekly limit, the current session, and context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green; the Fable percentage is yellow at 61%.">
       <div class="titlebar">
         <span class="dots"><span></span><span></span><span></span></span>
         <span class="tb-label">claude-code · powershell</span>
@@ -1150,7 +1161,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="term-body">
         <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
         <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1173,6 +1184,11 @@ h1.headline .accent { color: var(--accent); }
         <div class="icon">$</div>
         <h3>API-rate cost</h3>
         <p>Dollar cost for both windows, priced per model family with the correct input, output, and cache rates.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">F</div>
+        <h3>Fable&nbsp;5 weekly limit</h3>
+        <p>The premium-model window Claude Code meters separately &mdash; and <strong>does not send to any status line</strong>. Fetched from the endpoint <code>/usage</code> reads, so you see it coming. <a href="#fable">How it works</a>.</p>
       </div>
       <div class="feature">
         <div class="icon">#</div>
@@ -1210,6 +1226,12 @@ h1.headline .accent { color: var(--accent); }
             <td class="feat">5h / 7d window %</td>
             <td data-col="Default"><span class="cross">—</span></td>
             <td data-col="claude-powerline"><span class="tick">●</span></td>
+            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Fable 5 weekly limit</td>
+            <td data-col="Default"><span class="cross">—</span></td>
+            <td data-col="claude-powerline"><span class="cross">—</span></td>
             <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
           </tr>
           <tr>
@@ -1302,16 +1324,16 @@ h1.headline .accent { color: var(--accent); }
   <div class="shell">
     <div class="section-head">
       <div class="section-eyebrow">Anatomy</div>
-      <h2 class="section-title">Seven segments, seven signals.</h2>
+      <h2 class="section-title">Eight segments, eight signals.</h2>
       <p class="section-kicker">
         Each segment uses a different ANSI 256-color index so it reads like a dashboard.
       </p>
     </div>
 
-    <figure class="anatomy-shot" aria-label="Close-up of the status line showing six colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, and current context.">
+    <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable 5 weekly limit with a yellow percentage, current session, and current context.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1357,6 +1379,12 @@ h1.headline .accent { color: var(--accent); }
           <td data-col="ANSI" class="source">108</td>
         </tr>
         <tr>
+          <td data-col="Segment" class="seg" style="color: #a21caf;"><span class="swatch" style="background: #d787d7;"></span>fable</td>
+          <td data-col="Sample" class="sample">61% (resets 4d6h @ Sun 6am)</td>
+          <td data-col="Derivation" class="source"><code>GET /api/oauth/usage</code> &rarr; <code>limits[]</code> where <code>kind</code> is <code>weekly_scoped</code>; refreshed every 5&nbsp;min off the render path</td>
+          <td data-col="ANSI" class="source">176</td>
+        </tr>
+        <tr>
           <td data-col="Segment" class="seg" style="color: #a16207;"><span class="swatch" style="background: #d7af00;"></span>session</td>
           <td data-col="Sample" class="sample">8.2M ($6.18)</td>
           <td data-col="Derivation" class="source">contiguous activity, walking back until a 30-minute gap</td>
@@ -1370,6 +1398,78 @@ h1.headline .accent { color: var(--accent); }
         </tr>
       </tbody>
     </table>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────── FABLE -->
+<section class="section" id="fable">
+  <div class="shell">
+    <div class="section-head">
+      <div class="section-eyebrow">New in v0.5.0</div>
+      <h2 class="section-title">The Fable&nbsp;5 limit no status line could show.</h2>
+      <p class="section-kicker">
+        Claude Code meters premium models on a weekly window of their own, separate from your plan-wide weekly limit. Run out of it and Fable is gone for the rest of the week while <code>7d</code> still reads 25%.
+      </p>
+    </div>
+
+    <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable 5 weekly limit at 61 percent in yellow.">
+      <div class="term-body">
+        <div class="statusline compact">
+          <span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span>
+        </div>
+      </div>
+    </figure>
+
+    <div class="methodology">
+      <div class="methodology-text">
+        <p>
+          <strong>The hook payload cannot carry it.</strong> Claude Code assembles the status line's <code>rate_limits</code> object from <code>five_hour</code> and <code>seven_day</code> and nothing else. The Fable window is live in the same process &mdash; read straight off the <code>anthropic-ratelimit-unified-*</code> response headers, alongside the Opus and Sonnet buckets &mdash; and none of them are forwarded. No way of parsing the hook JSON will surface it, which is why no status line has shown it, this one included until now.
+        </p>
+        <p>
+          So it is fetched the same way <code>/usage</code> gets it: <code>GET /api/oauth/usage</code>, where the window arrives as a <code>limits[]</code> entry with <code>kind: "weekly_scoped"</code>. The segment is built from whatever scoped windows your account actually has, so a second one appearing server-side shows up without a code change, and an account with none renders nothing.
+        </p>
+        <p>
+          <strong>Your prompt never waits on it.</strong> The render reads a small cache file; when that cache ages past its TTL the render spawns a detached process to do the fetch, and the result lands on the next render. An atomically created lock file means ten open Claude Code windows still make one request between them.
+        </p>
+      </div>
+
+      <div>
+        <ol class="steps-ol">
+          <li>
+            <span class="idx">01</span>
+            <span class="body">
+              <strong>Read the cache</strong>
+              <span class="meta">One small file. No network call on the render path, ever.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">02</span>
+            <span class="body">
+              <strong>Take the lock, or move on</strong>
+              <span class="meta">One fetch per interval across every open window; an orphaned lock clears after 120s.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">03</span>
+            <span class="body">
+              <strong>Fetch detached</strong>
+              <span class="meta">Token held in memory for the request only. Expired token? No request at all.</span>
+            </span>
+          </li>
+          <li>
+            <span class="idx">04</span>
+            <span class="body">
+              <strong>Degrade honestly</strong>
+              <span class="meta">Older than three hours renders <code>--%</code> rather than passing a stale number off as current.</span>
+            </span>
+          </li>
+        </ol>
+
+        <div class="note">
+          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint &mdash; no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, or <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second interval.
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -1552,8 +1652,15 @@ h1.headline .accent { color: var(--accent); }
       </div>
 
       <div class="faq-item">
+        <h3 class="faq-q">How do I see my Fable&nbsp;5 weekly limit?</h3>
+        <p class="faq-a">Claude Code meters premium models on a weekly window separate from your plan-wide weekly limit — <code>/usage</code> draws it as its own bar. It is <strong>not in the status-line hook payload</strong>, which carries the <code>five_hour</code> and <code>seven_day</code> buckets and nothing else, so no status line can read it from the hook.</p>
+        <p class="faq-a">This one fetches it from the endpoint <code>/usage</code> itself uses and renders it as a <code>fable 61%</code> segment with its own reset countdown. The fetch happens in a detached process every 15 minutes, so your prompt never waits on the network. <a href="#fable">Full detail here</a>.</p>
+      </div>
+
+      <div class="faq-item">
         <h3 class="faq-q">Does it send my data anywhere?</h3>
-        <p class="faq-a">No. It makes no network calls at all. It reads transcript files that already exist on your disk and writes one small JSON cache beside them. It is a single PowerShell file you can read end to end, MIT licensed.</p>
+        <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
+        <p class="faq-a">The exception is the Fable&nbsp;5 limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes — the same one <code>/usage</code> calls — using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
       </div>
     </div>
   </div>
