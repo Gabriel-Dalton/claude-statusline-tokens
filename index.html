@@ -285,10 +285,17 @@ p code, li code, td code, dd code, span code {
   font-family: var(--mono);
   font-weight: 600;
   font-size: 16px;
+  /* Flex centring centres the glyph's *em box*, not its ink. This glyph
+     carries more space below the mark than above it, so box-centring left
+     it sitting 1.8px high (measured: 1.6px clear above, 3.4px below).
+     line-height:1 removes the inherited half-leading, and the nudge
+     centres what the eye actually sees. */
+  line-height: 1;
+  padding-top: 1px;
 }
 .brand .name { letter-spacing: -0.01em; }
 .brand .tag {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
   color: var(--fg-muted);
   background: var(--bg-soft);
@@ -436,14 +443,14 @@ h1.headline .accent { color: var(--accent); }
   border-bottom: 1px solid #262626;
   gap: 8px;
 }
-.hero-shot .dots { display: inline-flex; gap: 6px; }
-.hero-shot .dots span {
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: #3a3a3a;
-}
+/* The three imitation macOS window-control circles that used to sit here
+   are gone. They were not controls, nothing happened when you clicked
+   them, and a macOS window frame around a Windows PowerShell tool was
+   incoherent on top of being stock decoration. What is left is a caption
+   saying what you are looking at, which is all the frame was ever doing
+   honestly. */
 .hero-shot .tb-label {
-  margin-left: 12px;
+  margin-left: 0;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--code-muted);
@@ -489,10 +496,23 @@ h1.headline .accent { color: var(--accent); }
 
 .statusline {
   margin-top: 14px;
-  white-space: nowrap;
   font-size: 13px;
   font-variant-ligatures: none;
   font-feature-settings: "tnum";
+  /* Soft-wrap, at every width, which is what a real terminal does with a
+     line this long. It used to be nowrap inside a clipped box: at 1440px
+     the sample was 1660px wide in a 934px container, so 726px of it —
+     44%, including the entire Fable, session and context segments — was
+     simply unreachable unless you thought to drag it sideways. Hiding
+     almost half of the thing the page is selling is worse than showing it
+     on two lines.
+     Segments stay atomic via `.statusline > span` below, so the line
+     breaks between segments and never through the middle of one. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0;
+  row-gap: 4px;
   /* The sample line is deliberately nowrap — a status line that wrapped
      would misrepresent what it looks like in a terminal. Its container
      clips with overflow:hidden to keep the rounded corners, so without
@@ -504,6 +524,9 @@ h1.headline .accent { color: var(--accent); }
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+/* One segment is one unbreakable unit: it may move to the next line, but
+   it never splits across two. */
+.statusline > span { white-space: nowrap; }
 .statusline::-webkit-scrollbar { height: 6px; }
 .statusline::-webkit-scrollbar-track { background: transparent; }
 .statusline::-webkit-scrollbar-thumb {
@@ -563,11 +586,14 @@ h1.headline .accent { color: var(--accent); }
     row-gap: 6px;
   }
   .statusline .seg-sep { display: none; }
-  /* Each segment already owns its own line here, so the nowrap inherited
-     from the 720px rule buys nothing and costs the tail of the longest
-     one: "5h 97% (168.2M tok, $127, resets 12m @ 1:50pm)" was being cut
-     mid-timestamp. Scrolling it sideways inside a mock terminal is worse
-     on a phone than letting it run to a second line, so let it wrap. */
+  /* Below this width the longest segment genuinely cannot fit on one line
+     — at 320px there are about 256px to play with and it needs 324px — so
+     here, and only here, a segment is allowed to run onto a second line
+     rather than be scrolled out of sight.
+     The label and its percentage are joined by a non-breaking space in the
+     markup, so the break always lands inside the parenthetical and never
+     between "5h" and "97%". Splitting a reading from its label is the one
+     wrap that would actively mislead. */
   .statusline > span { white-space: normal; }
 }
 
@@ -588,12 +614,17 @@ h1.headline .accent { color: var(--accent); }
 }
 @media (max-width: 420px) { .section-head { margin-bottom: 32px; } }
 .section-title { text-wrap: balance; }
+/* Sans, not mono. Monospace on this page means "literal terminal text" —
+   it is what the status-line samples, file paths and env vars are set in.
+   Spending it on section labels diluted that, and small-caps monospace in
+   an accent colour is a stock generated-page signature. Same reasoning as
+   the hero eyebrow. */
 .section-eyebrow {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12px;
-  letter-spacing: 0.06em;
-  color: var(--accent);
-  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+  font-weight: 600;
   text-transform: uppercase;
   margin-bottom: 12px;
 }
@@ -611,9 +642,13 @@ h1.headline .accent { color: var(--accent); }
 }
 
 /* ─────────────────────────────────────────── FEATURES (replacing compare) */
+/* Three columns, not four. At four, the fifth card sat alone on a second
+   row beside three empty cells and read as a bug rather than a layout.
+   Three divides the six cards evenly at every breakpoint: 3+3 here,
+   2+2+2 below 1080, and a single column below 560. */
 .features {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
   margin-bottom: 48px;
 }
@@ -718,9 +753,13 @@ h1.headline .accent { color: var(--accent); }
   line-height: 1.5;
   margin: 0;
 }
-.headroom-green { border-color: #bbf7d0; box-shadow: inset 3px 0 0 #22c55e; padding-left: 21px; }
-.headroom-yellow { border-color: #fde68a; box-shadow: inset 3px 0 0 #f5b733; padding-left: 21px; }
-.headroom-red    { border-color: #fecaca; box-shadow: inset 3px 0 0 #ef4444; padding-left: 21px; }
+/* These three cards previously each carried a tinted border plus a coloured
+   inset stripe down the left edge. Three cards side by side, each ringed in
+   its own semantic colour, is a stock pattern — and it was redundant besides:
+   the thing being demonstrated is that *the percentage* changes colour, and
+   the sample inside each card already shows exactly that. Wrapping the
+   demonstration in more of the same colour competed with it. The cards are
+   now plain; the data carries the meaning. */
 
 /* ─────────────────────────────────────────── COMPARE TABLE */
 .compare-wrap {
@@ -1166,7 +1205,7 @@ h1.headline .accent { color: var(--accent); }
     </h1>
 
     <p class="lede">
-      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath &mdash; raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable&nbsp;5 weekly limit</a> Claude Code never sends to a status line at all.
+      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath: raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable&nbsp;5 weekly limit</a> Claude Code never sends to a status line at all.
     </p>
 
     <div class="cta">
@@ -1182,13 +1221,12 @@ h1.headline .accent { color: var(--accent); }
 
     <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, the Fable 5 weekly limit, the current session, and context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green; the Fable percentage is yellow at 61%.">
       <div class="titlebar">
-        <span class="dots"><span></span><span></span><span></span></span>
         <span class="tb-label">claude-code · powershell</span>
       </div>
       <div class="term-body">
         <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
         <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1215,12 +1253,17 @@ h1.headline .accent { color: var(--accent); }
       <div class="feature">
         <div class="icon">F</div>
         <h3>Fable&nbsp;5 weekly limit</h3>
-        <p>The premium-model window Claude Code meters separately &mdash; and <strong>does not send to any status line</strong>. Fetched from the endpoint <code>/usage</code> reads, so you see it coming. <a href="#fable">How it works</a>.</p>
+        <p>The premium-model window Claude Code meters separately, and <strong>does not send to any status line</strong>. Fetched from the endpoint <code>/usage</code> reads, so you see it coming. <a href="#fable">How it works</a>.</p>
       </div>
       <div class="feature">
         <div class="icon">#</div>
         <h3>Raw token totals</h3>
         <p>Actual tokens consumed in the 5-hour and 7-day windows, summed locally from your transcripts.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">@</div>
+        <h3>Reset countdown</h3>
+        <p>Every window says when it frees up: <code>resets 2h14m @ 12:38pm</code>. Immune to DST, and it survives renders where Claude Code sends no rate-limit data at all.</p>
       </div>
       <div class="feature">
         <div class="icon">›</div>
@@ -1304,7 +1347,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="section-eyebrow">Headroom</div>
       <h2 class="section-title">The number changes color before you hit a wall.</h2>
       <p class="section-kicker">
-        The 5h and 7d percentages come straight from your signed-in Claude account &mdash; the same number Claude Code uses to throttle you. The status line tints it so you read the band, not the digits.
+        The 5h and 7d percentages come straight from your signed-in Claude account. It is the same number Claude Code uses to throttle you. The status line tints it so you read the band, not the digits.
       </p>
     </div>
 
@@ -1313,7 +1356,7 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-g">green</span> &lt; 50%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in green at 24 percent.">
-            <span class="seg-5h">5h <span class="pct-green">24%</span> (41.2M tok, $31.06)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">9%</span> (98.4M tok, $74.19)</span>
+            <span class="seg-5h">5h&nbsp;<span class="pct-green">24%</span> (41.2M tok, $31.06)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">9%</span> (98.4M tok, $74.19)</span>
           </div>
         </div>
         <p class="headroom-blurb">Comfortable. Plenty of room left in both windows.</p>
@@ -1323,7 +1366,7 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-y">yellow</span> 50&ndash;79%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in yellow at 68 percent.">
-            <span class="seg-5h">5h <span class="pct-yellow">68%</span> (118.9M tok, $89.65)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-yellow">52%</span> (287.3M tok, $217)</span>
+            <span class="seg-5h">5h&nbsp;<span class="pct-yellow">68%</span> (118.9M tok, $89.65)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-yellow">52%</span> (287.3M tok, $217)</span>
           </div>
         </div>
         <p class="headroom-blurb">Pacing matters. Time to wrap up the long-running task before the reset.</p>
@@ -1333,15 +1376,15 @@ h1.headline .accent { color: var(--accent); }
         <figcaption><span class="pill pill-r">red</span> &ge; 80%</figcaption>
         <div class="term-body">
           <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in red at 97 percent.">
-            <span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-red">88%</span> (486.5M tok, $367)</span>
+            <span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-red">88%</span> (486.5M tok, $367)</span>
           </div>
         </div>
-        <p class="headroom-blurb">Near the limit. A throttle could land mid-turn &mdash; finish or switch accounts.</p>
+        <p class="headroom-blurb">Near the limit. A throttle could land mid-turn, so finish or switch accounts.</p>
       </figure>
     </div>
 
     <p class="note" style="margin-top: 32px;">
-      Want different bands? Set <code>STATUSLINE_PCT_THRESHOLDS</code> to a <code>warn,crit</code> pair before Claude Code starts &mdash; e.g. <code>STATUSLINE_PCT_THRESHOLDS=65,85</code> shifts yellow to 65% and red to 85%. The defaults are <code>50,80</code>.
+      Want different bands? Set <code>STATUSLINE_PCT_THRESHOLDS</code> to a <code>warn,crit</code> pair before Claude Code starts. For example, <code>STATUSLINE_PCT_THRESHOLDS=65,85</code> shifts yellow to 65% and red to 85%. The defaults are <code>50,80</code>.
     </p>
   </div>
 </section>
@@ -1360,7 +1403,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable 5 weekly limit with a yellow percentage, current session, and current context.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h <span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1442,7 +1485,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable 5 weekly limit at 61 percent in yellow.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-7d">7d <span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable <span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span>
+          <span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span>
         </div>
       </div>
     </figure>
@@ -1450,7 +1493,7 @@ h1.headline .accent { color: var(--accent); }
     <div class="methodology">
       <div class="methodology-text">
         <p>
-          <strong>The hook payload cannot carry it.</strong> Claude Code assembles the status line's <code>rate_limits</code> object from <code>five_hour</code> and <code>seven_day</code> and nothing else. The Fable window is live in the same process &mdash; read straight off the <code>anthropic-ratelimit-unified-*</code> response headers, alongside the Opus and Sonnet buckets &mdash; and none of them are forwarded. No way of parsing the hook JSON will surface it, which is why no status line has shown it, this one included until now.
+          <strong>The hook payload cannot carry it.</strong> Claude Code assembles the status line's <code>rate_limits</code> object from <code>five_hour</code> and <code>seven_day</code> and nothing else. The Fable window is live in the same process, read straight off the <code>anthropic-ratelimit-unified-*</code> response headers alongside the Opus and Sonnet buckets, and none of them are forwarded. No way of parsing the hook JSON will surface it, which is why no status line has shown it, this one included until now.
         </p>
         <p>
           So it is fetched the same way <code>/usage</code> gets it: <code>GET /api/oauth/usage</code>, where the window arrives as a <code>limits[]</code> entry with <code>kind: "weekly_scoped"</code>. The segment is built from whatever scoped windows your account actually has, so a second one appearing server-side shows up without a code change, and an account with none renders nothing.
@@ -1493,7 +1536,7 @@ h1.headline .accent { color: var(--accent); }
         </ol>
 
         <div class="note">
-          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint &mdash; no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, or <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second interval.
+          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint: no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, or <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second interval.
         </div>
       </div>
     </div>
@@ -1507,7 +1550,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="section-eyebrow">Install</div>
       <h2 class="section-title">Three commands. Roughly thirty seconds.</h2>
       <p class="section-kicker">
-        First time touching Claude Code? Follow the guided path &mdash; <code>setup.ps1</code> does the file copy, the JSON merge, and a smoke test for you. No Node, no npm, no extra tools.
+        First time touching Claude Code? Follow the guided path. <code>setup.ps1</code> does the file copy, the JSON merge, and a smoke test for you. No Node, no npm, no extra tools.
       </p>
     </div>
 
@@ -1524,7 +1567,7 @@ h1.headline .accent { color: var(--accent); }
       <li class="step">
         <div class="step-num">Step 01</div>
         <h3>Clone the repo</h3>
-        <p>Anywhere on disk &mdash; the cloned folder is throwaway, <code>setup.ps1</code> copies the files it needs out of it.</p>
+        <p>Anywhere on disk. The cloned folder is throwaway; <code>setup.ps1</code> copies out the files it needs.</p>
 <pre><span class="x">git</span> clone https://github.com/Gabriel-Dalton/`
   claude-statusline-tokens</pre>
       </li>
@@ -1534,12 +1577,12 @@ h1.headline .accent { color: var(--accent); }
         <p>Copies the scripts to <code>~/.claude/</code>, shows the JSON it wants to add to <code>settings.json</code>, and asks <code>Y/n</code> before it writes. A backup is saved first.</p>
 <pre><span class="x">cd</span> claude-statusline-tokens
 <span class="x">.\setup.ps1</span></pre>
-        <p class="step-tip"><span class="tip-tag">Tip</span> Curious before committing? Run <code>.\setup.ps1 <span class="x">-DryRun</span></code> first &mdash; it prints the exact diff without touching anything.</p>
+        <p class="step-tip"><span class="tip-tag">Tip</span> Curious before committing? Run <code>.\setup.ps1 <span class="x">-DryRun</span></code> first. It prints the exact diff without touching anything.</p>
       </li>
       <li class="step">
         <div class="step-num">Step 03</div>
         <h3>Open a new Claude Code window</h3>
-        <p>The status line shows up on the next prompt. The current conversation won't pick up the change &mdash; you need a fresh one for the new <code>settings.json</code> to load.</p>
+        <p>The status line shows up on the next prompt. The current conversation won't pick up the change; you need a fresh one for the new <code>settings.json</code> to load.</p>
 <pre><span class="c"># first render</span>
 <span class="x">cold</span>  ~1.0s   <span class="c"># PS startup + scan</span>
 <span class="x">warm</span>  ~0.3s   <span class="c"># cached, &lt;20s old</span></pre>
@@ -1553,7 +1596,7 @@ h1.headline .accent { color: var(--accent); }
       </details>
       <details>
         <summary>On macOS or Linux?</summary>
-        <p>The scripts run under <code>pwsh</code> (PowerShell 7+) on Unix too. Same three commands &mdash; just install <code>pwsh</code> first via your package manager (<code>brew install powershell</code> on macOS, your distro's repo on Linux), then clone and run <code>./setup.ps1</code>.</p>
+        <p>The scripts run under <code>pwsh</code> (PowerShell 7+) on Unix too. Same three commands, but install <code>pwsh</code> first via your package manager (<code>brew install powershell</code> on macOS, your distro's repo on Linux), then clone and run <code>./setup.ps1</code>.</p>
       </details>
       <details>
         <summary>Something went wrong?</summary>
@@ -1577,13 +1620,13 @@ h1.headline .accent { color: var(--accent); }
     <div class="methodology">
       <div class="methodology-text">
         <p>
-          The <strong>percentages</strong> are not computed locally &mdash; they come straight from <code>rate_limits.five_hour.used_percentage</code> and its 7-day sibling. These are the same authoritative numbers Claude Code uses internally for throttling decisions.
+          The <strong>percentages</strong> are not computed locally. They come straight from <code>rate_limits.five_hour.used_percentage</code> and its 7-day sibling. These are the same authoritative numbers Claude Code uses internally for throttling decisions.
         </p>
         <p>
           The <strong>token totals</strong> beneath them are summed locally, exactly the way <code>ccusage</code> does it: a recursive scan of every transcript, regex-extracted, deduplicated by <code>message.id</code>, windowed by ISO timestamp.
         </p>
         <p>
-          <strong>Cost</strong> is computed per turn, using the actual model family detected on that transcript line &mdash; Opus, Sonnet, or Haiku &mdash; and the correct input, output, and cache rates. Ephemeral cache creation bills at the 5-minute rate when the breakdown isn't exposed &mdash; the API default for unflagged blocks, and the cheaper of the two tiers.
+          <strong>Cost</strong> is computed per turn, using the actual model family detected on that transcript line (Opus, Sonnet, or Haiku), with the correct input, output, and cache rates. Ephemeral cache creation bills at the 5-minute rate when the breakdown isn't exposed, which is the API default for unflagged blocks and the cheaper of the two tiers.
         </p>
       </div>
 
@@ -1654,7 +1697,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="faq-item">
         <h3 class="faq-q">Why does it say I used over 100 million tokens in one day?</h3>
         <p class="faq-a">Because roughly <strong>97% of that number is cache reads</strong>. Every turn re-sends the entire conversation to the model, and those replayed tokens are billed and counted each time.</p>
-        <p class="faq-a">A real measurement from a 5-hour session: <strong>168.2M tokens total</strong> across 827 assistant turns, of which <strong>164.4M was re-read context</strong> and only <strong>3.8M was genuinely new work</strong> — the words the model actually wrote plus what was newly sent. The arithmetic that confirms it is <code>827 turns &times; 198.8k average context = 164.4M</code>.</p>
+        <p class="faq-a">A real measurement from a 5-hour session: <strong>168.2M tokens total</strong> across 827 assistant turns, of which <strong>164.4M was re-read context</strong> and only <strong>3.8M was genuinely new work</strong>: the words the model actually wrote, plus what was newly sent. The arithmetic that confirms it is <code>827 turns &times; 198.8k average context = 164.4M</code>.</p>
         <p class="faq-a">The number is real. It is just the same conversation being read over and over, not 168 million tokens of new material. Run <code>scripts/verify-tokens.ps1</code> to reproduce that breakdown on your own transcripts.</p>
       </div>
 
@@ -1665,7 +1708,7 @@ h1.headline .accent { color: var(--accent); }
 
       <div class="faq-item">
         <h3 class="faq-q">When does the Claude Code 5-hour limit reset?</h3>
-        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time — <code>resets 2h14m @ 12:38pm</code> — on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
+        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time, <code>resets 2h14m @ 12:38pm</code>, on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
       </div>
 
       <div class="faq-item">
@@ -1680,14 +1723,14 @@ h1.headline .accent { color: var(--accent); }
 
       <div class="faq-item">
         <h3 class="faq-q">How do I see my Fable&nbsp;5 weekly limit?</h3>
-        <p class="faq-a">Claude Code meters premium models on a weekly window separate from your plan-wide weekly limit — <code>/usage</code> draws it as its own bar. It is <strong>not in the status-line hook payload</strong>, which carries the <code>five_hour</code> and <code>seven_day</code> buckets and nothing else, so no status line can read it from the hook.</p>
+        <p class="faq-a">Claude Code meters premium models on a weekly window separate from your plan-wide weekly limit, and <code>/usage</code> draws it as its own bar. It is <strong>not in the status-line hook payload</strong>, which carries the <code>five_hour</code> and <code>seven_day</code> buckets and nothing else, so no status line can read it from the hook.</p>
         <p class="faq-a">This one fetches it from the endpoint <code>/usage</code> itself uses and renders it as a <code>fable 61%</code> segment with its own reset countdown. The fetch happens in a detached process every 15 minutes, so your prompt never waits on the network. <a href="#fable">Full detail here</a>.</p>
       </div>
 
       <div class="faq-item">
         <h3 class="faq-q">Does it send my data anywhere?</h3>
         <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
-        <p class="faq-a">The exception is the Fable&nbsp;5 limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes — the same one <code>/usage</code> calls — using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
+        <p class="faq-a">The exception is the Fable&nbsp;5 limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
       </div>
     </div>
   </div>
