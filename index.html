@@ -256,7 +256,14 @@ p code, li code, td code, dd code, span code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 0;
+  /* padding-block, NOT the `padding: 18px 0` shorthand. This element is
+     `class="shell nav-row"`, and the shorthand's implied `0` for the
+     horizontal axis silently overrode .shell's own left/right padding —
+     same specificity, declared later, so .nav-row won. The result was a
+     nav with no gutter at all: the brand mark sat at x=0 and the GitHub
+     button ended flush with the viewport edge, both visibly clipped on a
+     phone, while .shell's mobile media queries appeared to have no effect. */
+  padding-block: 18px;
   gap: 24px;
 }
 .brand {
@@ -319,7 +326,7 @@ p code, li code, td code, dd code, span code {
   .nav-links a:not(.gh) { display: none; }
 }
 @media (max-width: 420px) {
-  .nav-row { padding: 14px 0; gap: 12px; }
+  .nav-row { padding-block: 14px; gap: 12px; }
   .brand .tag { display: none; }
   .brand .name { font-size: 14px; }
   .nav-links .gh { padding: 7px 12px; font-size: 13px; }
@@ -333,24 +340,20 @@ p code, li code, td code, dd code, span code {
 @media (max-width: 720px) { .hero { padding: 56px 0 48px; } }
 @media (max-width: 420px) { .hero { padding: 40px 0 36px; } }
 
+/* Was a monospace pill in accent orange with a small round dot on the left:
+   the stock "AI landing page" badge. Monospace is load-bearing further down
+   this page — the status-line samples, file paths and env vars are all set
+   in it, and it means "this is literal terminal text". Spending it on a
+   decorative label about the platform diluted that, and the dot read as a
+   live status indicator while indicating nothing at all.
+   It is now what it actually is: a line of metadata above the headline. */
 .eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 12px;
+  display: block;
+  font-family: var(--sans);
+  font-size: 14px;
   font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
-  padding: 6px 12px;
-  border-radius: 999px;
-  margin-bottom: 28px;
-}
-.eyebrow .dot {
-  width: 6px; height: 6px;
-  background: var(--accent);
-  border-radius: 50%;
+  color: var(--fg-muted);
+  margin-bottom: 20px;
 }
 
 h1.headline {
@@ -454,6 +457,11 @@ h1.headline .accent { color: var(--accent); }
   font-size: 13px;
   line-height: 1.6;
   color: #d4d4d4;
+  /* The hero is centre-aligned and that inherits all the way in here. It
+     never showed while every line was nowrap, but the moment a segment
+     wraps on a phone the continuation line centres itself under its own
+     box, which no terminal has ever done. Terminal output is left-aligned. */
+  text-align: left;
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: #2a2a2a transparent;
@@ -485,6 +493,22 @@ h1.headline .accent { color: var(--accent); }
   font-size: 13px;
   font-variant-ligatures: none;
   font-feature-settings: "tnum";
+  /* The sample line is deliberately nowrap — a status line that wrapped
+     would misrepresent what it looks like in a terminal. Its container
+     clips with overflow:hidden to keep the rounded corners, so without
+     this the line was simply cut off mid-segment on a phone with no way
+     to read the rest. Scroll it in place instead, so the page itself
+     never gains a horizontal scrollbar. */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.statusline::-webkit-scrollbar { height: 6px; }
+.statusline::-webkit-scrollbar-track { background: transparent; }
+.statusline::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
 }
 .statusline .seg-dir   { color: #ffaf5f; } /* ANSI 215 */
 .statusline .seg-git   { color: #d7af87; } /* ANSI 180 */
@@ -539,6 +563,12 @@ h1.headline .accent { color: var(--accent); }
     row-gap: 6px;
   }
   .statusline .seg-sep { display: none; }
+  /* Each segment already owns its own line here, so the nowrap inherited
+     from the 720px rule buys nothing and costs the tail of the longest
+     one: "5h 97% (168.2M tok, $127, resets 12m @ 1:50pm)" was being cut
+     mid-timestamp. Scrolling it sideways inside a mock terminal is worse
+     on a phone than letting it run to a second line, so let it wrap. */
+  .statusline > span { white-space: normal; }
 }
 
 /* ─────────────────────────────────────────── SECTION SHELL */
@@ -1129,10 +1159,7 @@ h1.headline .accent { color: var(--accent); }
 <!-- ─────────────────────────────────────────── HERO -->
 <header class="hero">
   <div class="shell">
-    <span class="eyebrow">
-      <span class="dot"></span>
-      Claude Code · Windows · PowerShell
-    </span>
+    <span class="eyebrow">Claude Code · Windows · PowerShell</span>
 
     <h1 class="headline">
       Token counts and <span class="accent">dollar cost</span> in your Claude Code status line.
