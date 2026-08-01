@@ -4,6 +4,11 @@
 statusline-tokens.cache.json
 statusline-accounts.json
 
+# Local Claude Code state. settings.local.json holds machine-specific
+# permission entries with absolute home paths, and agent worktrees are
+# whole stale copies of the repo — neither belongs in a public repo.
+.claude/
+
 # Editor cruft
 .vscode/
 .idea/

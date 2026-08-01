@@ -3,7 +3,8 @@
 Add-Type -AssemblyName System.Drawing
 
 $W = 1200; $H = 630
-$out = "C:\Users\Gabriel-Dalton\Documents\GitHub\claude-statusline-tokens\docs\img\og-card.png"
+# Repo-relative so the script works from any clone, on any machine.
+$out = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\img\og-card.png'
 
 $bmp = New-Object System.Drawing.Bitmap($W, $H)
 $g = [System.Drawing.Graphics]::FromImage($bmp)

@@ -54,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 ```
 
 ```
-CLAUDE USAGE DASHBOARD                          you@example.com
+CLAUDE USAGE DASHBOARD                                        you@example.com
 
 5-HOUR WINDOW       ████████████░░░░░░░░░░░░░░░░░░  43%  28.2M tok   $117
      oldest turn rolls out in 4h 26m    opus 322.1M  |  sonnet 0  |  haiku 541.9k
@@ -68,9 +68,9 @@ LOOP WATCH          quiet - 9 of last 10 tool turns distinct
 PRICIEST TURN       $0.42 (612.4k tok) at 12:19
 
 TOP PROJECTS (7d)                    TOP MODELS (7d)
-my-app           137.8M   opus       322.1M       $928
-docs-site                  68.7M   sonnet          0      $0.00
-my-project                43.8M   haiku       541.9k     $0.14
+my-app                      137.8M   opus       322.1M       $928
+docs-site                    68.7M   sonnet          0      $0.00
+api-service                  43.8M   haiku       541.9k     $0.14
 
 RECENT ACTIVITY (last 24h, per hour)
         ▁▅▆▇█          ▃
