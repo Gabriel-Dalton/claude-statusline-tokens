@@ -85,11 +85,14 @@ The cache lives at `~/.claude/statusline-scoped-limits.cache.json` and the spawn
 
 ```powershell
 function Fmt-Tokens([long]$n) {
-    if ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }
+    if ($n -ge 999950000) { '{0:0.00}B' -f ($n / 1000000000.0) }
+    elseif ($n -ge 999950) { '{0:0.0}M' -f ($n / 1000000.0) }
     elseif ($n -ge 1000) { '{0:0.0}k' -f ($n / 1000.0) }
     else { "$n" }
 }
 ```
+
+The thresholds are 999,950 and 999,950,000 rather than the round numbers because each tier rounds to one or two decimals — `999,999,999 / 1e6` formats as `1000.0M`, so B has to take over slightly before a billion.
 
 Want plain numbers with commas?
 
@@ -97,12 +100,11 @@ Want plain numbers with commas?
 function Fmt-Tokens([long]$n) { '{0:N0}' -f $n }   # → 1,234,567
 ```
 
-Want B for billions too?
+Want M all the way up, no B rollover?
 
 ```powershell
 function Fmt-Tokens([long]$n) {
-    if ($n -ge 1000000000) { '{0:0.00}B' -f ($n / 1000000000.0) }
-    elseif ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }
+    if ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }   # → 1354.0M
     elseif ($n -ge 1000) { '{0:0.0}k' -f ($n / 1000.0) }
     else { "$n" }
 }

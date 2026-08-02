@@ -844,8 +844,16 @@ $hookFields = [pscustomobject]@{
     ctxPct              = $ctxPctRaw
 }
 
+# A 7d window on a heavy plan runs past a billion tokens, where "1354.0M" is
+# both wider and harder to read than "1.35B". B keeps two decimals because one
+# would round a 60M-token swing away.
+#
+# Each threshold is the point where the tier below would *round* to 1000, not
+# where it reaches it: 999,949,999 still renders as "999.9M" at one decimal,
+# but 999,950,000 rounds up to "1000.0M", so that is where B has to take over.
 function Fmt-Tokens([long]$n) {
-    if ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }
+    if ($n -ge 999950000) { '{0:0.00}B' -f ($n / 1000000000.0) }
+    elseif ($n -ge 999950) { '{0:0.0}M' -f ($n / 1000000.0) }
     elseif ($n -ge 1000) { '{0:0.0}k' -f ($n / 1000.0) }
     else { "$n" }
 }

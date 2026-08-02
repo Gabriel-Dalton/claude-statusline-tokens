@@ -6,7 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **Token counts roll over to `B` past a billion.** `Fmt-Tokens` topped out at `M`, so a 7-day window on a heavy plan drew `1354.0M tok` — seven characters of the widest segment on the line, spent saying something `1.35B` says in five. `B` carries two decimals: one would round a 60M-token swing away.
+
+  The thresholds are `999,950` and `999,950,000` rather than the round numbers, because each tier rounds before it prints. `999,999,999` is under a billion but formats as `1000.0M` at one decimal, so the tier above has to take over slightly early or the boundary shows a count in units it has already outgrown. Same fix in `claude-dashboard.ps1` and `scripts/verify-tokens.ps1`.
 
 ## [0.6.0] - 2026-08-01
 

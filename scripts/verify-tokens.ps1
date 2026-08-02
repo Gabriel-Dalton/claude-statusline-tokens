@@ -119,7 +119,8 @@ foreach ($f in $files) {
 }
 
 function Fmt([long]$n) {
-    if ($n -ge 1000000) { '{0:N1}M' -f ($n / 1e6) }
+    if ($n -ge 999950000) { '{0:N2}B' -f ($n / 1e9) }
+    elseif ($n -ge 999950) { '{0:N1}M' -f ($n / 1e6) }
     elseif ($n -ge 1000) { '{0:N1}k' -f ($n / 1e3) }
     else { "$n" }
 }

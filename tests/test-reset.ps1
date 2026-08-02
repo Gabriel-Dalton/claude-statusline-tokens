@@ -50,9 +50,9 @@ function Render($rateLimits) {
 }
 # "5h 44% (12.0k tok, $0.06, ...)" -> 12000
 function Tok([string]$line, [string]$label) {
-    if ($line -notmatch ("{0}\s+\S+\s+\(([0-9.]+)([kM]?) tok" -f [regex]::Escape($label))) { return -1 }
+    if ($line -notmatch ("{0}\s+\S+\s+\(([0-9.]+)([kMB]?) tok" -f [regex]::Escape($label))) { return -1 }
     $n = [double]$Matches[1]
-    switch ($Matches[2]) { 'k' { $n * 1000 } 'M' { $n * 1000000 } default { $n } }
+    switch ($Matches[2]) { 'k' { $n * 1000 } 'M' { $n * 1000000 } 'B' { $n * 1000000000 } default { $n } }
 }
 
 $now = [DateTime]::UtcNow
@@ -130,6 +130,27 @@ $before = Tok (Render @{ five_hour = @{ used_percentage = 40; resets_at = (E $no
 $after = Tok (Render @{ five_hour = @{ used_percentage = 1; resets_at = (E $now.AddHours(5)) } }) '5h'
 Check 'cached 17k before the roll' ($before -eq 17000) "got $before"
 Check 'recomputed to 0 on the roll, not served from cache' ($after -eq 0) "got $after"
+
+"--- 8. a window past a billion tokens rolls over to B"
+# A 7d window on a heavy plan clears a billion, and "1354.0M" is both wider
+# than the segment wants and harder to read than "1.35B".
+Write-Turns @(
+    @{ minutesAgo = 4320; tokens = 677000000 },
+    @{ minutesAgo = 2880; tokens = 677000000 }
+)
+Fresh
+$l = Render @{ seven_day = @{ used_percentage = 90; resets_at = (E $now.AddHours(4)) } }
+Check 'renders 1.35B, not 1354.0M' ($l -match '7d \S+ \(1\.35B tok') $l
+
+"--- 9. and nothing renders as 1000.0M on the way there"
+# 999,999,999 is under a billion but rounds to "1000.0M" at one decimal, so
+# the B threshold has to sit below the round number, not on it.
+Write-Turns @(
+    @{ minutesAgo = 4320; tokens = 999999999 }
+)
+Fresh
+$l = Render @{ seven_day = @{ used_percentage = 90; resets_at = (E $now.AddHours(4)) } }
+Check 'the 1000.0M boundary reads 1.00B' ($l -match '7d \S+ \(1\.00B tok') $l
 
 ""
 "$pass passed, $fail failed"

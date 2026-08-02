@@ -142,8 +142,11 @@ function ConvertTo-Utc($value) {
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+# Thresholds sit where the tier below would round up to 1000, not where it
+# reaches it, so nothing ever renders as "1000.0M".
 function Fmt-Tokens([long]$n) {
-    if ($n -ge 1000000) { '{0:0.0}M' -f ($n / 1000000.0) }
+    if ($n -ge 999950000) { '{0:0.00}B' -f ($n / 1000000000.0) }
+    elseif ($n -ge 999950) { '{0:0.0}M' -f ($n / 1000000.0) }
     elseif ($n -ge 1000) { '{0:0.0}k' -f ($n / 1000.0) }
     else { "$n" }
 }
