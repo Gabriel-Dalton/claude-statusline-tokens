@@ -191,6 +191,311 @@ if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
 $scopedCachePath = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.cache.json')
 $scopedLockPath  = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.lock')
 
+# --- shared limit store: one set of numbers for every open window ---------
+# The percentages on this line arrive on the hook stdin, and Claude Code
+# fills rate_limits in per session: a window only learns the new figure when
+# *it* gets an API response. Two windows open side by side therefore drift
+# apart — the one you just used reads 44%, the one idle since lunch still
+# reads 42% — and both are honestly reporting what they were handed. The
+# quota itself is one number per account, so the disagreement is an artifact
+# of where the number is kept, not of what it is.
+#
+# This file is that one number, on disk, shared by every window. Each render
+# folds in whatever its own hook just said, then renders what the store
+# holds rather than what it was personally told.
+#
+# Merge rule, per bucket:
+#   * resets_at is the window's identity. A later one means the window
+#     rolled, so the incoming observation replaces the old outright — usage
+#     drops to near zero at a reset, and a high-water mark would otherwise
+#     pin the display at the previous window's number.
+#   * Within one window, the observation whose *information* is most recent
+#     wins, in either direction. Ties break on the larger figure, since
+#     usage only accumulates inside a window.
+#
+# The load-bearing idea is that second clause, and specifically that it
+# compares information age rather than values. Every observation carries
+# when its observer last actually heard from the server:
+#   * a hook payload -> that window's transcript mtime. Claude Code
+#     refreshes rate_limits when the session gets an API response and writes
+#     the assistant turn at the same moment, so the file's mtime is a local,
+#     network-free proxy for "when was this window last told the truth".
+#   * an endpoint reading -> when it was fetched.
+#
+# The first shape of this took the maximum instead, reasoning that usage is
+# monotonic within a fixed window so the larger figure must be the newer
+# one. That is true of the underlying quota and false of the readings.
+# Claude Code can advance five_hour.resets_at before it refreshes
+# five_hour.used_percentage, so a reading arrives pairing the NEW window's
+# stamp with the OLD window's number: the roll clause accepts it, the
+# maximum clause then refuses every honest lower reading that follows, and
+# the segment sits on that number for a full five hours. Observed in the
+# wild — 50% shown against a real usage of 3%.
+#
+# Comparing information age handles both directions with one rule. An idle
+# window re-rendering its own stale 42% loses to a live 44% because its
+# transcript is twenty minutes cold, not because 42 < 44 — and that same
+# rule refuses the same window's stale 50% after a roll, which the maximum
+# could not.
+$limitsStorePath = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-limits.cache.json')
+# 2: buckets carry knownAtUtc (information age). A v1 store's values have no
+# provenance, so they are discarded rather than trusted.
+$limitsSchema    = 2
+# Same-window tolerance. Two observations of one window carry the same
+# resets_at give or take precision: the hook sends whole epoch seconds, the
+# usage endpoint sends microseconds. Distinct windows are five hours or
+# seven days apart, so anything under two minutes is the same window.
+$limitsWindowTolSec = 120
+
+# Bucket keys. '5h' and '7d' are fed by both the hook and the usage
+# endpoint; 'scoped:<name>' only ever by the endpoint, because Claude Code
+# does not forward per-model quotas on the status line hook at all.
+$limitsKey5h = '5h'
+$limitsKey7d = '7d'
+
+function Read-LimitsStore([string]$Path, [string]$Org) {
+    $buckets = @{}
+    if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path $Path)) { return $buckets }
+    $raw = $null
+    # Opened sharing ReadWrite *and* Delete so this read can never make
+    # another window's swap fail. File.ReadAllText would deny Delete, which
+    # turns a reader into the reason a writer loses its update. One retry
+    # covers the instant the file is mid-swap; a torn or locked read
+    # degrades this render to hook-only values, which is the pre-store
+    # behavior rather than a wrong number.
+    foreach ($attempt in 1..2) {
+        $fs = $null; $sr = $null
+        try {
+            $fs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+            $sr = New-Object System.IO.StreamReader($fs)
+            $raw = $sr.ReadToEnd()
+            break
+        } catch { Start-Sleep -Milliseconds 20 }
+        finally {
+            if ($sr) { try { $sr.Dispose() } catch {} }
+            if ($fs) { try { $fs.Dispose() } catch {} }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $buckets }
+    try {
+        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+        # Quota windows are per-account. Replaying another org's percentage
+        # after a switch would be a confident lie, so a store belonging to
+        # anyone else is discarded rather than migrated.
+        if ([string]$doc.orgKey -ne $Org) { return $buckets }
+        if ([int]$doc.schemaVersion -ne $script:limitsSchema) { return $buckets }
+        foreach ($prop in $doc.buckets.PSObject.Properties) {
+            $b = $prop.Value
+            if ($null -eq $b) { continue }
+            $entry = @{
+                name          = [string]$b.name
+                percent       = [double]$b.percent
+                observedAtUtc = ConvertTo-ResetUtc $b.observedAtUtc
+                resetsAtUtc   = ConvertTo-ResetUtc $b.resetsAtUtc
+                knownAtUtc    = ConvertTo-ResetUtc $b.knownAtUtc
+            }
+            if ($null -eq $entry.observedAtUtc) { continue }
+            if ($null -eq $entry.knownAtUtc) { $entry.knownAtUtc = [DateTime]::MinValue }
+            $buckets[$prop.Name] = $entry
+        }
+    } catch { Write-DebugLog $_ -Scope 'limits-store-read' }
+    return $buckets
+}
+
+# Fold one observation into $Store, which is mutated in place.
+#   $Percent      0-100
+#   $ResetsUtc    the window this figure belongs to, or $null
+#   $ObservedUtc  when this render looked (drives the staleness gate)
+#   $KnownAtUtc   when the *observer* last learned its figure — see above
+function Merge-LimitObservation($Store, [string]$Key, [string]$Name, $Percent, $ResetsUtc, [DateTime]$ObservedUtc, $KnownAtUtc) {
+    if ($null -eq $Store -or [string]::IsNullOrEmpty($Key) -or $null -eq $Percent) { return }
+    $p = $null
+    if ($Percent -is [double] -or $Percent -is [int] -or $Percent -is [long] -or
+        $Percent -is [decimal] -or $Percent -is [single]) {
+        $p = [double]$Percent
+    } else {
+        $parsed = 0.0
+        if ([double]::TryParse([string]$Percent, [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { $p = $parsed }
+    }
+    if ($null -eq $p) { return }
+    # A figure outside 0-100 means the payload shape changed under us.
+    # Refusing it keeps a renamed field from writing nonsense into a store
+    # every other window then reads back as gospel.
+    if ($p -lt 0 -or $p -gt 100) {
+        Write-DebugLog "out-of-range percent for $Key`: $p" -Scope 'limits-merge'
+        return
+    }
+
+    $known = [DateTime]::MinValue
+    if ($KnownAtUtc) { $known = [DateTime]$KnownAtUtc }
+
+    $incoming = @{ name = $Name; percent = $p; observedAtUtc = $ObservedUtc
+                   resetsAtUtc = $ResetsUtc; knownAtUtc = $known }
+    $old = $Store[$Key]
+    if ($null -eq $old) { $Store[$Key] = $incoming; return }
+
+    # Window identity first: a later resets_at means the window rolled and
+    # everything about the old one is void, whoever reports it.
+    if ($old.resetsAtUtc -and $ResetsUtc) {
+        $delta = ($ResetsUtc - $old.resetsAtUtc).TotalSeconds
+        if ($delta -gt $script:limitsWindowTolSec)  { $Store[$Key] = $incoming; return }
+        if ($delta -lt -$script:limitsWindowTolSec) { return }
+    }
+
+    # Within one window, the observer who learned its figure most recently
+    # wins — in either direction. Ties break on the larger figure, since
+    # usage only accumulates.
+    $oldKnown = [DateTime]::MinValue
+    if ($old.knownAtUtc) { $oldKnown = [DateTime]$old.knownAtUtc }
+    if (($known -gt $oldKnown) -or ($known -eq $oldKnown -and $p -gt [double]$old.percent)) {
+        # Keep whichever reset stamp we have; the endpoint's is more precise
+        # than the hook's whole-second epoch but they describe the same
+        # instant, so either is correct to display.
+        if (-not $incoming.resetsAtUtc) { $incoming.resetsAtUtc = $old.resetsAtUtc }
+        # observedAtUtc only ever moves forward. One render merges the hook
+        # observation (stamped now) and then the cached endpoint observation
+        # (stamped when it was *fetched*, minutes older); the second would
+        # otherwise drag the freshness stamp backwards, and the staleness
+        # gate reads that stamp, so a stamp that can go backwards is a stamp
+        # that can blank a live bar.
+        if ($old.observedAtUtc -and ([DateTime]$old.observedAtUtc) -gt $ObservedUtc) {
+            $incoming.observedAtUtc = $old.observedAtUtc
+        }
+        $Store[$Key] = $incoming
+        return
+    }
+
+    # This observer knows nothing more recent than what we already hold, so
+    # its figure is refused whichever way it points. observedAtUtc still
+    # moves forward, because something did just confirm the bucket is being
+    # watched — it must not look stale merely because the number is settled.
+    if ((-not $old.observedAtUtc) -or ($ObservedUtc -gt [DateTime]$old.observedAtUtc)) {
+        $old.observedAtUtc = $ObservedUtc
+    }
+    if (-not $old.resetsAtUtc -and $ResetsUtc) { $old.resetsAtUtc = $ResetsUtc }
+    $Store[$Key] = $old
+}
+
+function Write-LimitsStore([string]$Path, [string]$Org, $Store) {
+    if ([string]::IsNullOrEmpty($Path) -or $null -eq $Store) { return }
+    $out = @{}
+    foreach ($k in $Store.Keys) {
+        $b = $Store[$k]
+        $row = @{ name = [string]$b.name; percent = [double]$b.percent }
+        # ISO-8601 round-trip ('o'), never a raw [DateTime]: ConvertTo-Json
+        # writes those as "\/Date(...)\/", which pins the file to one
+        # serializer's private format.
+        if ($b.observedAtUtc) { $row.observedAtUtc = ([DateTime]$b.observedAtUtc).ToString('o') }
+        if ($b.resetsAtUtc)   { $row.resetsAtUtc   = ([DateTime]$b.resetsAtUtc).ToString('o') }
+        if ($b.knownAtUtc -and ([DateTime]$b.knownAtUtc) -gt [DateTime]::MinValue) {
+            $row.knownAtUtc = ([DateTime]$b.knownAtUtc).ToString('o')
+        }
+        $out[$k] = $row
+    }
+    $body = @{ schemaVersion = $script:limitsSchema; orgKey = $Org; buckets = $out } |
+        ConvertTo-Json -Compress -Depth 5
+    # Write-then-swap so a concurrent reader sees either the whole old file
+    # or the whole new one, never half of each. The pid suffix keeps two
+    # windows from fighting over one temp name.
+    $ownPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
+    $tmp = '{0}.{1}.tmp' -f $Path, $ownPid
+    $bak = '{0}.{1}.bak' -f $Path, $ownPid
+    try {
+        [System.IO.File]::WriteAllText($tmp, $body, (New-Object System.Text.UTF8Encoding($false)))
+        if (Test-Path $Path) {
+            # The backup path is required, not optional. File.Replace has no
+            # two-argument overload, and passing $null for the third one
+            # does not reach .NET as null: PowerShell binds it to a [string]
+            # parameter as "", and ReplaceFile rejects that with "The path
+            # is not of a legal form". That exception landed in the catch
+            # below, so every write after the very first one silently did
+            # nothing and the store froze at its initial value while each
+            # window still rendered its own merge correctly — which made it
+            # look like a display bug rather than a write that never landed.
+            [System.IO.File]::Replace($tmp, $Path, $bak)
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } catch {
+        Write-DebugLog $_ -Scope 'limits-store-write'
+        # Last resort: a plain overwrite. It gives up atomicity, so a reader
+        # can catch it mid-write — which Read-LimitsStore already treats as
+        # "no store this render" rather than as bad data.
+        try { [System.IO.File]::WriteAllText($Path, $body, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+    } finally {
+        foreach ($leftover in @($tmp, $bak)) {
+            try { Remove-Item -LiteralPath $leftover -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+}
+
+# Read, merge, write — all inside one cross-process lock, because they are
+# one operation. Without it two windows can read the same store, each fold
+# in its own observation, and the second write erases the first: the very
+# lost update this file exists to prevent. An uncontended mutex costs
+# microseconds, and the whole critical section is one small file.
+#
+# $Observations is a list of hashtables: key, name, percent, resetsUtc,
+# observedUtc. Returns the merged store whether or not the lock was taken,
+# so a render that loses the lock still displays correct numbers — it just
+# does not contribute its own observation this time round.
+function Sync-LimitsStore([string]$Path, [string]$Org, $Observations) {
+    # Named per store path so an isolated profile (a test, a second user)
+    # never contends with the real one. 'Local\' scopes it to the logon
+    # session, which is the same boundary the profile directory has.
+    $mutexName = $null
+    try {
+        $sha = New-Object Security.Cryptography.SHA1Managed
+        $tag = [BitConverter]::ToString(
+            $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Path.ToLowerInvariant()))).Replace('-', '').Substring(0, 16)
+        $mutexName = 'Local\claude-statusline-limits-' + $tag
+    } catch { $mutexName = $null }
+
+    $mutex = $null
+    $held  = $false
+    if ($mutexName) {
+        try {
+            $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+            # A render that cannot get in within a quarter second is better
+            # off rendering than blocking the prompt on a file lock.
+            try { $held = $mutex.WaitOne(250) }
+            catch [System.Threading.AbandonedMutexException] {
+                # Held by a window that was killed. The lock is ours now,
+                # and the store is a plain merge target, so there is no
+                # half-finished state to repair.
+                $held = $true
+            }
+        } catch { Write-DebugLog $_ -Scope 'limits-store-lock'; $held = $false }
+    }
+
+    try {
+        $store = Read-LimitsStore $Path $Org
+        foreach ($o in $Observations) {
+            if (-not $o) { continue }
+            Merge-LimitObservation $store $o.key $o.name $o.percent $o.resetsUtc $o.observedUtc $o.knownUtc
+        }
+        if ($held) { Write-LimitsStore $Path $Org $store }
+        return $store
+    } finally {
+        if ($held -and $mutex) { try { $mutex.ReleaseMutex() } catch {} }
+        if ($mutex) { try { $mutex.Dispose() } catch {} }
+    }
+}
+
+# A bucket whose window has already elapsed holds a percentage for a quota
+# period that no longer exists. Nobody has refreshed it yet, so the honest
+# render is '--%' rather than last window's number.
+function Get-LiveBucket($Store, [string]$Key, [DateTime]$NowUtc) {
+    if ($null -eq $Store) { return $null }
+    $b = $Store[$Key]
+    if ($null -eq $b) { return $null }
+    if ($b.resetsAtUtc -and ([DateTime]$b.resetsAtUtc) -le $NowUtc) { return $null }
+    return $b
+}
+
 function Get-ScopedLimitsPayload([string]$CachePath, [string]$Org) {
     # Seed from whatever is already on disk so a failed refresh keeps the
     # last good numbers instead of blanking the segment. A cache belonging
@@ -212,8 +517,20 @@ function Get-ScopedLimitsPayload([string]$CachePath, [string]$Org) {
                 if ($prev.PSObject.Properties.Match('failures').Count -gt 0) {
                     $payload.failures = [int]$prev.failures
                 }
-                $payload.limits = @(@($prev.limits) | Where-Object { $_ } | ForEach-Object {
-                    @{ name = [string]$_.name; percent = [double]$_.percent; resetsAt = [string]$_.resetsAt }
+                # A row with no reset stamp is unusable downstream — the
+                # window guard cannot run on it — and re-seeding it on every
+                # failed refresh keeps it alive forever. Drop it here so one
+                # bad reading does not become permanent.
+                $payload.limits = @(@($prev.limits) |
+                    Where-Object { $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.resetsAt) } |
+                    ForEach-Object {
+                    # A cache written before this file carried per-kind rows
+                    # holds weekly_scoped entries and nothing else, so an
+                    # absent kind is that. Assuming it keeps an upgrade from
+                    # discarding the last good per-model number.
+                    $k = [string]$_.kind
+                    if ([string]::IsNullOrWhiteSpace($k)) { $k = 'weekly_scoped' }
+                    @{ kind = $k; name = [string]$_.name; percent = [double]$_.percent; resetsAt = [string]$_.resetsAt }
                 })
             }
         }
@@ -262,20 +579,39 @@ function Get-ScopedLimitsPayload([string]$CachePath, [string]$Org) {
         return $payload
     } finally { $token = $null }
 
-    # limits[] holds one entry per bar /usage draws. 'session' and
-    # 'weekly_all' duplicate what the hook already gives us; the per-model
-    # bars are the 'weekly_scoped' ones, identified by scope.model.
-    # display_name ('Fable' today). Anything else is ignored, so a new bar
-    # appearing server-side can't corrupt the segment.
+    # limits[] holds one entry per bar /usage draws. All three kinds are
+    # kept now, not just the per-model one:
+    #   session       -> the 5h window, the same quota the hook reports
+    #   weekly_all    -> the 7d window, likewise
+    #   weekly_scoped -> a per-model weekly quota ('Fable' today),
+    #                    identified by scope.model.display_name
+    # The first two look redundant against the hook, and are, right up
+    # until every window has been idle long enough that no hook has carried
+    # a fresh figure. This endpoint is account-wide and does not care which
+    # window asks, so it is what lets an idle window converge on the truth
+    # without needing a turn of its own first.
+    # Any other kind is ignored, so a new bar appearing server-side cannot
+    # corrupt the segment.
     $found = @()
     foreach ($lim in @($resp.limits)) {
-        if ([string]$lim.kind -ne 'weekly_scoped') { continue }
-        $name = [string]$lim.scope.model.display_name
-        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $kind = [string]$lim.kind
+        if ($kind -ne 'session' -and $kind -ne 'weekly_all' -and $kind -ne 'weekly_scoped') { continue }
+        $name = ''
+        if ($lim.scope -and $lim.scope.model) { $name = [string]$lim.scope.model.display_name }
+        # A scoped bar with no model name cannot be labelled or keyed, so
+        # it is dropped rather than rendered as an anonymous percentage.
+        if ($kind -eq 'weekly_scoped' -and [string]::IsNullOrWhiteSpace($name)) { continue }
+        # Normalized to ISO-8601 UTC here rather than stringified raw.
+        # ConvertFrom-Json hands back a plain string today, but on a payload
+        # shape where it materializes a [DateTime] instead, a bare [string]
+        # cast would emit machine-local wall-clock with no offset — which
+        # the reader then takes as UTC and shifts by the host's offset.
+        $rUtc = ConvertTo-ResetUtc $lim.resets_at
         $found += @{
+            kind     = $kind
             name     = $name
             percent  = [double]$lim.percent
-            resetsAt = [string]$lim.resets_at
+            resetsAt = $(if ($rUtc) { $rUtc.ToString('o') } else { '' })
         }
     }
     $payload.limits       = $found
@@ -607,8 +943,20 @@ function Fmt-Reset($value, [bool]$includeDay) {
 
 # --- token sums across the rolling windows ---------------------------------
 $nowUtc = [DateTime]::UtcNow
-$cut5h  = $nowUtc.AddHours(-5)
-$cut7d  = $nowUtc.AddDays(-7)
+
+# Floor for *finding* work, distinct from the per-window cutoffs below. No
+# transcript older than seven days can matter to any window here, so this is
+# what filters the file list, bounds the parse, and ages out cached turns. It
+# must stay independent of the window cutoffs: the moment the 7d quota resets
+# its cutoff jumps to roughly now, and filtering files by that would hide the
+# last five hours of turns from the 5h window, which has its own unrelated
+# window.
+$scanFloor = $nowUtc.AddDays(-7)
+
+# Provisional. Resolved from the quota's own reset stamps after the cache
+# read below, once those stamps are known.
+$cut5h = $nowUtc.AddHours(-5)
+$cut7d = $scanFloor
 
 # "Session" = the most recent contiguous burst of activity, walking backward
 # until we hit a gap larger than this many minutes between consecutive turns.
@@ -619,6 +967,14 @@ $sessionGapMinutes = 30
 $tok5h      = [long]0; $cost5h      = 0.0
 $tok7d      = [long]0; $cost7d      = 0.0
 $tokSession = [long]0; $costSession = 0.0   # all accounts contributing to the current burst
+
+# Latest turn per model id, as UTC ticks, for the current account only.
+# Feeds the scoped-quota refresh decision further down: a per-model weekly
+# bar has no hook source at all, so the only way to know it is out of date
+# is to notice that the model behind it has run since we last asked. Keyed
+# by the raw model id rather than by family so a scoped bar for a model
+# this script has never heard of still matches on name.
+$lastModelTurns = @{}
 
 # $userProfile is resolved near the top of the script, before the stdin
 # read, because the scoped-limits child needs it there too.
@@ -814,7 +1170,11 @@ $rxCache1h  = [regex]'"ephemeral_1h_input_tokens":(\d+)'
 # Cache: full scan takes ~600-800ms over 19MB+, but the statusline re-renders
 # on every turn. Reuse the cached numbers if computed within the last 20s.
 $cacheTtlSec = 20
-$cacheSchemaVersion = 2   # bump when on-disk shape changes; older caches discarded
+# Bumped to 3 for the per-turn modelId that lastModelTurns is built from.
+# A v2 cache's replayed turns carry no model, so resuming from one would
+# leave the scoped-refresh trigger permanently blind; discarding it costs
+# a single full rescan on upgrade.
+$cacheSchemaVersion = 3   # bump when on-disk shape changes; older caches discarded
 $useCache = $false
 $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
@@ -823,6 +1183,37 @@ if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 # the previous scan. Always loaded (even on top-level cache HIT) so the
 # next MISS can resume cheaply.
 $transcriptCache = @{}
+
+# Peek at the shared store's reset stamps. Another window may already have
+# seen a roll, and this one would otherwise spend a cache TTL summing tokens
+# against a window that has ended.
+#
+# These land in their own variables and must stay there. $reset5hUtc is this
+# window's own account of which window its percentage belongs to, and the
+# merge relies on that to reject a reading from a window that has since
+# rolled. An earlier version of this peek wrote the newer stamp straight into
+# $reset5hUtc, which re-labelled a stale percentage as belonging to the
+# current window and walked straight back into the failure the merge rule
+# exists to prevent.
+$storePeek = Read-LimitsStore $limitsStorePath $currentOrgKey
+$storeReset5hUtc = $null
+$storeReset7dUtc = $null
+if ($storePeek[$limitsKey5h] -and $storePeek[$limitsKey5h].resetsAtUtc) {
+    $storeReset5hUtc = [DateTime]$storePeek[$limitsKey5h].resetsAtUtc
+}
+if ($storePeek[$limitsKey7d] -and $storePeek[$limitsKey7d].resetsAtUtc) {
+    $storeReset7dUtc = [DateTime]$storePeek[$limitsKey7d].resetsAtUtc
+}
+# Reset stamps only move forward, so the later of the two is the current
+# window. Used for the token cutoffs and the cache-validity test below, never
+# for labelling an observation.
+function Get-LaterStamp($a, $b) {
+    if ($null -eq $a) { return $b }
+    if ($null -eq $b) { return $a }
+    if (([DateTime]$a) -ge ([DateTime]$b)) { return [DateTime]$a }
+    return [DateTime]$b
+}
+
 if (Test-Path $cachePath) {
     try {
         $cache = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json -ErrorAction Stop
@@ -842,7 +1233,25 @@ if (Test-Path $cachePath) {
         # didn't exist before M1-04) is treated as a MISS so the next
         # scan rebuilds the per-file tail cache from scratch and M1-02's
         # session-recompute has data to work with.
-        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion) {
+        # A rolled quota window invalidates the totals even inside the TTL.
+        # tok5h was summed from the previous window's start, so the instant
+        # resets_at advances that number describes a window that has ended.
+        # Without this the segment keeps the old window's tokens for up to a
+        # full cache TTL after the percentage has already dropped to zero.
+        $sameWindow = $true
+        foreach ($w in @(
+            @{ live = (Get-LaterStamp $reset5hUtc $storeReset5hUtc); field = 'resets5h' },
+            @{ live = (Get-LaterStamp $reset7dUtc $storeReset7dUtc); field = 'resets7d' }
+        )) {
+            if ($cachedOrg -ne $currentOrgKey -or $null -eq $w.live) { continue }
+            if ($cache.PSObject.Properties.Match($w.field).Count -eq 0) { continue }
+            $cachedReset = ConvertTo-ResetUtc $cache.($w.field)
+            if ($null -eq $cachedReset) { continue }
+            if ([Math]::Abs((([DateTime]$w.live) - $cachedReset).TotalSeconds) -gt $limitsWindowTolSec) {
+                $sameWindow = $false
+            }
+        }
+        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion -and $sameWindow) {
             $tok5h       = [long]$cache.tok5h
             $tok7d       = [long]$cache.tok7d
             $cost5h      = [double]$cache.cost5h
@@ -886,9 +1295,54 @@ if (Test-Path $cachePath) {
             if ($null -eq $reset7dUtc -and $cache.PSObject.Properties.Match('resets7d').Count -gt 0) {
                 $reset7dUtc = ConvertTo-ResetUtc $cache.resets7d
             }
+            # Also restored outside the TTL gate, because the scoped-refresh
+            # decision needs it on every render including the ones that skip
+            # the scan. Apply-Turn only ever moves a stamp forward, so a
+            # carried-over entry for a model that has since gone quiet stays
+            # harmlessly old rather than re-triggering anything.
+            if ($cache.PSObject.Properties.Match('lastModelTurns').Count -gt 0 -and $cache.lastModelTurns) {
+                foreach ($prop in $cache.lastModelTurns.PSObject.Properties) {
+                    $whenUtc = ConvertTo-ResetUtc $prop.Value
+                    if ($null -eq $whenUtc) { continue }
+                    $lastModelTurns[$prop.Name] = $whenUtc.Ticks
+                }
+            }
         }
     } catch { Write-DebugLog $_ -Scope 'cache-read' }
 }
+
+# --- resolve the quota windows --------------------------------------------
+# The percentage and the token total have to describe the same window, or the
+# segment contradicts itself. They did not. The percentage comes from a fixed
+# window ending at resets_at; these cutoffs were a rolling "last five hours
+# from now". Close enough to agree most of the time, and maximally wrong at
+# precisely the moment a window resets — the percentage falls to zero while
+# the tokens carry on reporting the window that just ended.
+#
+# So the cutoff comes from the reset stamp rather than from the clock:
+#   * window still open -> it began one window-length before it ends
+#   * window elapsed    -> the next one began the instant the old one ended,
+#                          so that instant is the cutoff, and the totals show
+#                          only what has been spent since
+# Clamped to one window length in either direction, so a reset stamp that has
+# gone stale — nothing has refreshed it for hours — cannot widen the window
+# and over-count. With no stamp at all the old rolling behaviour stands,
+# which is the best available guess.
+function Get-WindowStart([DateTime]$NowRef, $ResetUtc, [TimeSpan]$Length) {
+    $floor = $NowRef - $Length
+    if ($null -eq $ResetUtc) { return $floor }
+    $r = [DateTime]$ResetUtc
+    $start = $(if ($r -le $NowRef) { $r } else { $r - $Length })
+    if ($start -lt $floor)  { return $floor }
+    if ($start -gt $NowRef) { return $NowRef }
+    return $start
+}
+# Fed by the best-known stamp — this window's, or a newer one another window
+# already recorded. Which window's percentage we are looking at is a separate
+# question, decided by the merge; this one is only "where does the current
+# quota period begin".
+$cut5h = Get-WindowStart $nowUtc (Get-LaterStamp $reset5hUtc $storeReset5hUtc) ([TimeSpan]::FromHours(5))
+$cut7d = Get-WindowStart $nowUtc (Get-LaterStamp $reset7dUtc $storeReset7dUtc) ([TimeSpan]::FromDays(7))
 
 # Extract a turn from a single line. Returns a hashtable with ticks,
 # sum, cost, msgId on success, or $null when the line isn't an
@@ -948,7 +1402,10 @@ function Parse-UsageLine([string]$line, [DateTime]$cut7dRef) {
         $t1h     * $p.cacheW1h
     ) / 1000000.0
 
-    return @{ ticks = $t.Ticks; sum = $sum; cost = $cost; msgId = $msgId }
+    # modelId rides along so Apply-Turn can note which models have run
+    # recently. It is what tells the scoped-quota refresh that the bar it
+    # is showing is behind — see $lastModelTurns.
+    return @{ ticks = $t.Ticks; sum = $sum; cost = $cost; msgId = $msgId; modelId = $modelId }
 }
 
 # Apply a parsed turn to the rolling aggregates and the session-turn
@@ -976,11 +1433,23 @@ function Apply-Turn($turn) {
     }
 
     if ($isCurrent) {
-        $script:tok7d  += [long]$turn.sum
-        $script:cost7d += [double]$turn.cost
+        # Each window tests its own cutoff. 7d used to be unconditional
+        # because the parse floor *was* the 7d cutoff; those became two
+        # different things once the cutoff tracks the quota, not the clock.
+        if ($t -gt $script:cut7d) {
+            $script:tok7d  += [long]$turn.sum
+            $script:cost7d += [double]$turn.cost
+        }
         if ($t -gt $script:cut5h) {
             $script:tok5h  += [long]$turn.sum
             $script:cost5h += [double]$turn.cost
+        }
+        if ($turn.modelId) {
+            $mk = ([string]$turn.modelId).ToLowerInvariant()
+            if (-not $script:lastModelTurns.ContainsKey($mk) -or
+                [long]$turn.ticks -gt $script:lastModelTurns[$mk]) {
+                $script:lastModelTurns[$mk] = [long]$turn.ticks
+            }
         }
     }
     # Capture every turn (any account) for session detection
@@ -999,7 +1468,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
     $transcriptStateOut = @{}
     $files = Get-ChildItem -Path $projectsDir -Filter *.jsonl -Recurse `
         -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
+        Where-Object { $_.LastWriteTimeUtc -gt $scanFloor }
 
     foreach ($f in $files) {
         $key = $f.FullName
@@ -1026,10 +1495,12 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                 $resumeOffset = [long]$cached.lastScanOffset
                 if ($cached.PSObject.Properties.Match('turns').Count -gt 0 -and $cached.turns) {
                     foreach ($prev in $cached.turns) {
-                        # Drop cached turns that have aged out of the 7d
-                        # window since the last scan. Keeping them would
-                        # over-count the 7d total.
-                        if ([long]$prev.ticks -lt $cut7d.Ticks) { continue }
+                        # Drop cached turns that have aged past the scan
+                        # floor since the last scan. Deliberately the floor
+                        # and not $cut7d: the per-file cache is the input to
+                        # every window, so narrowing it to the 7d quota
+                        # window would starve the 5h one.
+                        if ([long]$prev.ticks -lt $scanFloor.Ticks) { continue }
                         $kept += ,(@{ ticks = [long]$prev.ticks; sum = [long]$prev.sum; cost = [double]$prev.cost; msgId = [string]$prev.msgId })
                     }
                 }
@@ -1063,7 +1534,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             while (-not $reader.EndOfStream) {
                 $line = $reader.ReadLine()
                 if (-not $line) { continue }
-                $turn = Parse-UsageLine $line $cut7d
+                $turn = Parse-UsageLine $line $scanFloor
                 if (-not $turn) { continue }
                 # Track the latest assistant usage line in this file so
                 # the per-file cache can record it (used by context-token
@@ -1122,9 +1593,9 @@ if ($useCache) {
         if ($entry.PSObject.Properties.Match('turns').Count -le 0) { continue }
         if (-not $entry.turns) { continue }
         foreach ($t in $entry.turns) {
-            # Same 7d filter as the scan path so stale cached turns
-            # don't keep contributing to the session window forever.
-            if ([long]$t.ticks -lt $cut7d.Ticks) { continue }
+            # Same floor as the scan path so stale cached turns don't
+            # keep contributing to the session window forever.
+            if ([long]$t.ticks -lt $scanFloor.Ticks) { continue }
             [void]$turns.Add(@{ ticks = [long]$t.ticks; sum = [long]$t.sum; cost = [double]$t.cost })
         }
     }
@@ -1182,6 +1653,14 @@ try {
     # keeps the reader (and claude-dashboard.ps1) from having to guess.
     if ($null -ne $reset5hUtc) { $payload.resets5h = $reset5hUtc.ToString('o') }
     if ($null -ne $reset7dUtc) { $payload.resets7d = $reset7dUtc.ToString('o') }
+    # Ticks are the scan's working form; ISO-8601 is the on-disk form, so
+    # the file stays legible to claude-dashboard.ps1 and to anything else
+    # that opens it.
+    $modelTurnsOut = @{}
+    foreach ($mk in $lastModelTurns.Keys) {
+        $modelTurnsOut[$mk] = ([DateTime]::new([long]$lastModelTurns[$mk], [DateTimeKind]::Utc)).ToString('o')
+    }
+    $payload.lastModelTurns = $modelTurnsOut
     # Persist the per-transcript tail cache (M1-04). On a top-level
     # cache HIT (or when no projects dir exists) we didn't scan, so
     # carry forward whatever we loaded from the previous cache file
@@ -1236,13 +1715,66 @@ if ($scopedEnabled -and (Test-Path $scopedCachePath)) {
 $scopedTtlSec = 900
 if ($env:STATUSLINE_SCOPED_TTL -match '^\d+$') { $scopedTtlSec = [int]$env:STATUSLINE_SCOPED_TTL }
 
+# The per-model bars, separated from the session/weekly_all rows the same
+# cache now carries. A row from a cache written before those existed has no
+# kind and is a model bar by definition.
+$scopedModelBars = @($scopedLimits | Where-Object {
+    $_ -and ([string]$_.kind -eq 'weekly_scoped' -or [string]::IsNullOrWhiteSpace([string]$_.kind))
+})
+
+# --- has the scoped quota moved since we last asked? ----------------------
+# 900 seconds is the right cadence for a bar nobody is currently moving and
+# the wrong one for a bar you are actively spending: a Fable turn lands and
+# the segment sits on a number up to fifteen minutes old, which reads as
+# broken rather than as throttled. The hook cannot help here — Claude Code
+# forwards five_hour and seven_day and no per-model bucket at all — so the
+# only available evidence that the displayed figure is behind is that the
+# model behind it has run since the last successful fetch.
+#
+# That is what $lastModelTurns is for. Match each scoped bar's display name
+# against the model ids that actually produced turns ('Fable' against
+# claude-fable-5), and if any of them ran after the last good fetch, drop to
+# a short floor instead of the idle interval.
+#
+# Seeded with the fable/mythos family so the very first such turn on a
+# machine with no scoped cache yet still triggers promptly, before any bar
+# names are known.
+$scopedActiveTtlSec = 90
+if ($env:STATUSLINE_SCOPED_ACTIVE_TTL -match '^\d+$') { $scopedActiveTtlSec = [int]$env:STATUSLINE_SCOPED_ACTIVE_TTL }
+
+$scopedNeedles = @('fable', 'mythos')
+foreach ($bar in $scopedModelBars) {
+    $n = ([string]$bar.name).Trim().ToLowerInvariant()
+    if ($n -and $scopedNeedles -notcontains $n) { $scopedNeedles += $n }
+}
+$scopedActivityUtc = $null
+foreach ($mk in $lastModelTurns.Keys) {
+    $hit = $false
+    foreach ($needle in $scopedNeedles) {
+        if ([string]$mk -like ('*{0}*' -f $needle)) { $hit = $true; break }
+    }
+    if (-not $hit) { continue }
+    $when = [DateTime]::new([long]$lastModelTurns[$mk], [DateTimeKind]::Utc)
+    if ($null -eq $scopedActivityUtc -or $when -gt $scopedActivityUtc) { $scopedActivityUtc = $when }
+}
+# Compared against the last *successful* fetch, not the last attempt: a
+# failed request tells us nothing about the number, so it must not count as
+# having seen the new one. After a success only turns newer than it can
+# re-trigger, which bounds a sustained burst to one request per floor.
+$scopedMoved = ($null -ne $scopedActivityUtc) -and
+               (($null -eq $scopedFetchedUtc) -or ($scopedActivityUtc -gt $scopedFetchedUtc))
+
 # Exponential backoff on consecutive failed requests, capped at an hour, so a
 # 429 or an outage is not answered by knocking every interval indefinitely.
 # Only requests that actually reached the network increment the counter; a
-# success resets it to zero.
+# success resets it to zero. The backoff deliberately overrides the activity
+# floor above — being mid-burst is not a reason to keep knocking on an
+# endpoint that just refused us.
 $scopedInterval = $scopedTtlSec
+if ($scopedMoved) { $scopedInterval = $scopedActiveTtlSec }
 if ($scopedFailures -gt 0) {
-    $scopedInterval = [Math]::Min($scopedTtlSec * [Math]::Pow(2, $scopedFailures), 3600)
+    $backoff = [Math]::Min($scopedTtlSec * [Math]::Pow(2, $scopedFailures), 3600)
+    $scopedInterval = [Math]::Max($scopedInterval, $backoff)
 }
 $scopedAge = [double]::MaxValue
 if ($null -ne $scopedAttempted) { $scopedAge = ($nowUtc - $scopedAttempted).TotalSeconds }
@@ -1251,6 +1783,85 @@ if ($null -ne $scopedAttempted) { $scopedAge = ($nowUtc - $scopedAttempted).Tota
 if ($scopedEnabled -and ($scopedAge -lt 0 -or $scopedAge -ge $scopedInterval)) {
     Request-ScopedLimitsRefresh $PSCommandPath $scopedLockPath $currentOrgKey
 }
+
+# --- fold this render's observations into the shared store ----------------
+$limitsObs = New-Object System.Collections.ArrayList
+
+# What this particular window was handed on stdin. It may well be behind
+# what another window already knows; the merge is what decides that, not the
+# fact that this render happens to be the one running.
+
+# When did *this* window last actually hear from the server? Claude Code
+# refreshes rate_limits on an API response and writes the assistant turn to
+# the transcript at the same moment, so the transcript's mtime dates this
+# window's figures without a network call. A window sitting idle carries a
+# correspondingly old stamp, and the merge weighs it accordingly rather than
+# treating every render as equally informed.
+#
+# DateTime.MinValue when there is no transcript to date it by: a figure of
+# unknown vintage can seed an empty bucket but never displace a dated one.
+$hookKnownUtc = [DateTime]::MinValue
+if ($hookFields.transcript_path) {
+    try {
+        $tf = Get-Item -LiteralPath $hookFields.transcript_path -ErrorAction Stop
+        $hookKnownUtc = $tf.LastWriteTimeUtc
+        # A file stamped in the future (clock change, or a copy that kept its
+        # mtime) would outrank every honest observation forever.
+        if ($hookKnownUtc -gt $nowUtc) { $hookKnownUtc = $nowUtc }
+    } catch { Write-DebugLog $_ -Scope 'hook-known-at' }
+}
+
+[void]$limitsObs.Add(@{ key = $limitsKey5h; name = '5h'; percent = $pct5h; resetsUtc = $reset5hUtc; observedUtc = $nowUtc; knownUtc = $hookKnownUtc })
+[void]$limitsObs.Add(@{ key = $limitsKey7d; name = '7d'; percent = $pct7d; resetsUtc = $reset7dUtc; observedUtc = $nowUtc; knownUtc = $hookKnownUtc })
+
+# What the usage endpoint last returned, stamped with when it was actually
+# fetched rather than with now. Covers every bar, including the per-model
+# ones no hook ever carries.
+if ($scopedEnabled -and $null -ne $scopedFetchedUtc) {
+    foreach ($lim in $scopedLimits) {
+        if (-not $lim) { continue }
+        $kind = [string]$lim.kind
+        if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'weekly_scoped' }
+        $rUtc = ConvertTo-ResetUtc $lim.resetsAt
+        # A row with no usable reset stamp is dropped rather than merged
+        # window-blind. Without a stamp the window guard cannot run, so the
+        # figure would be applied to whatever window happens to be current —
+        # and the endpoint does emit such rows: a session bar read in the
+        # instant after a reset came back with a null resets_at, and the
+        # failure path then carried that row forward indefinitely.
+        if ($null -eq $rUtc) { continue }
+        # An endpoint reading is dated by when it was fetched — it is a
+        # direct point-in-time read of the account, so its information is
+        # exactly as old as the request that produced it.
+        if ($kind -eq 'session') {
+            [void]$limitsObs.Add(@{ key = $limitsKey5h; name = '5h'; percent = $lim.percent; resetsUtc = $rUtc; observedUtc = $scopedFetchedUtc; knownUtc = $scopedFetchedUtc })
+        } elseif ($kind -eq 'weekly_all') {
+            [void]$limitsObs.Add(@{ key = $limitsKey7d; name = '7d'; percent = $lim.percent; resetsUtc = $rUtc; observedUtc = $scopedFetchedUtc; knownUtc = $scopedFetchedUtc })
+        } elseif ($kind -eq 'weekly_scoped') {
+            $barName = ([string]$lim.name).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($barName)) {
+                [void]$limitsObs.Add(@{ key = ('scoped:' + $barName); name = $barName; percent = $lim.percent; resetsUtc = $rUtc; observedUtc = $scopedFetchedUtc; knownUtc = $scopedFetchedUtc })
+            }
+        }
+    }
+}
+
+$limitsStore = Sync-LimitsStore $limitsStorePath $currentOrgKey $limitsObs
+
+# Render from the store, not from this window's stdin. A window whose hook
+# has not caught up — or has not sent rate_limits at all yet, which is every
+# render before its first API response of the session — now shows the
+# account's real figure instead of its own stale one or '--%'.
+$bucket5h = Get-LiveBucket $limitsStore $limitsKey5h $nowUtc
+if ($bucket5h) {
+    $pct5h = $bucket5h.percent
+    if ($bucket5h.resetsAtUtc) { $reset5hUtc = $bucket5h.resetsAtUtc }
+} else { $pct5h = $null }
+$bucket7d = Get-LiveBucket $limitsStore $limitsKey7d $nowUtc
+if ($bucket7d) {
+    $pct7d = $bucket7d.percent
+    if ($bucket7d.resetsAtUtc) { $reset7dUtc = $bucket7d.resetsAtUtc }
+} else { $pct7d = $null }
 
 # --- context tokens: last usage block in the current session transcript --
 # Fast path (M1-04): the projects-dir scan already captured the last
@@ -1466,20 +2077,28 @@ $parts += (Color $fg7d      ("7d {0} ({1})" -f $p7Tinted, $body7d))
 # timestamp stays true for days, the same reasoning the cached resets7d
 # fallback rests on, and Fmt-Reset drops it once it has elapsed.
 $scopedMaxAgeSec = 10800
-foreach ($lim in $scopedLimits) {
-    $scopedName = [string]$lim.name
+foreach ($bar in $scopedModelBars) {
+    $scopedName = ([string]$bar.name).Trim()
     if ([string]::IsNullOrWhiteSpace($scopedName)) { continue }
+    # Read through the shared store like every other segment, so two
+    # windows cannot disagree about this bar either — even though only one
+    # of them may have been the window that fetched it.
+    $bucket = Get-LiveBucket $limitsStore ('scoped:' + $scopedName) $nowUtc
     $pScoped = $loading
     $pScopedColor = $fgScoped
-    if ($null -ne $scopedFetchedUtc) {
-        $fetchAge = ($nowUtc - $scopedFetchedUtc).TotalSeconds
-        if ($fetchAge -ge 0 -and $fetchAge -lt $scopedMaxAgeSec) {
-            $pScoped = '{0}%' -f [int][math]::Round([double]$lim.percent, 0, [MidpointRounding]::AwayFromZero)
-            $pScopedColor = Get-PctColor $lim.percent
+    $rScoped = $null
+    if ($bucket) {
+        $fetchAge = [double]::MaxValue
+        if ($bucket.observedAtUtc) {
+            $fetchAge = ($nowUtc - [DateTime]$bucket.observedAtUtc).TotalSeconds
         }
+        if ($fetchAge -ge 0 -and $fetchAge -lt $scopedMaxAgeSec) {
+            $pScoped = '{0}%' -f [int][math]::Round([double]$bucket.percent, 0, [MidpointRounding]::AwayFromZero)
+            $pScopedColor = Get-PctColor $bucket.percent
+        }
+        $rScoped = Fmt-Reset $bucket.resetsAtUtc $true
     }
     $bodyScoped = ''
-    $rScoped = Fmt-Reset $lim.resetsAt $true
     if ($rScoped) { $bodyScoped = ' (resets {0})' -f $rScoped }
     $pScopedTinted = "$pScopedColor$pScoped$reset$fgScoped"
     $parts += (Color $fgScoped ('{0} {1}{2}' -f $scopedName.ToLowerInvariant(), $pScopedTinted, $bodyScoped))

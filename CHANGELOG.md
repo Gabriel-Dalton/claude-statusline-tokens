@@ -8,6 +8,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 _Nothing yet._
 
+## [0.6.0] - 2026-08-01
+
+### Added
+
+- **One set of numbers across every open window.** `rate_limits` is per-session hook data: Claude Code refreshes it for a window when *that* window gets an API response, so two terminals side by side would show 44% and 42% and both were honestly reporting what they had been told. The quota is one number per account; only its storage was per-window.
+
+  The figures now go through a shared, account-scoped store at `~/.claude/statusline-limits.cache.json`. Each render folds in what its own hook said and then draws what the store holds. Reads and writes run inside a cross-process mutex, so two windows rendering at once cannot lose each other's update.
+
+  A window also no longer shows `--%` before its first API response of the session — it picks up the account's real figure immediately.
+
+- **`STATUSLINE_SCOPED_ACTIVE_TTL`** (default `90` seconds). A per-model bar has no hook source at all, so it used to move only on the flat 15-minute poll: a Fable turn would land and the segment would sit on a number up to fifteen minutes old. The script now watches transcripts for turns on a model that has a bar, and refreshes on the short interval when one has run since the last successful fetch. Idle models still poll at `STATUSLINE_SCOPED_TTL`, and the failure backoff overrides both.
+
+- **`refreshInterval` in the documented settings snippet.** Claude Code's status line events go quiet while a session is idle, which would leave an idle window drawing whatever it last drew — including numbers the other windows have since moved past.
+
+- **A test suite**, `tests/run-all.ps1`: 53 assertions across four files, each driving the real script end to end with hook JSON on stdin and asserting against the rendered line. Suites build a throwaway profile, so nothing touches your `~/.claude`.
+
+### Fixed
+
+- **Token and cost totals now describe the same window as the percentage.** They never did: the percentage came from a fixed window ending at `resets_at`, while the totals were a rolling "last five hours from now". Close enough to agree most of the time, and maximally wrong at the moment a window resets — the percentage dropped to zero while the totals carried on reporting the window that had just ended. Cutoffs are now derived from the reset stamp, clamped to one window length so a stale stamp cannot widen the window and over-count, and a roll invalidates the token cache immediately rather than at the end of its TTL.
+
+- **A per-model bar's reset timestamp is normalised to UTC when it is cached**, rather than being stringified as-is. `ConvertFrom-Json` returns a string for it today, but on a payload shape where it materialises a `[DateTime]`, the previous cast would have written machine-local wall-clock with no offset — which the reader takes as UTC and shifts by the host's offset.
+
+- **An endpoint row with no reset timestamp is dropped rather than merged window-blind**, and is no longer carried forward forever by the failure path. The usage endpoint does emit such rows: a session bar read in the instant after a reset came back with a null `resets_at`.
+
+### Changed
+
+- Token cache schema `2` -> `3` (per-turn model id, for the activity-driven refresh above). Older caches are discarded, costing one full rescan on upgrade.
+
 ## [0.5.0] - 2026-08-01
 
 ### Added

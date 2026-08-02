@@ -159,8 +159,11 @@ function Invoke-Uninstall {
     Write-Host ''
     Write-OK "Uninstall complete."
     Write-Host ''
-    Write-Host "  Note: ~/.claude/statusline-tokens.cache.json, statusline-accounts.json and"
-    Write-Host "  statusline-scoped-limits.cache.json were left in place (history/cache files)."
+    Write-Host "  Note: these were left in place (history/cache files):"
+    Write-Host "    ~/.claude/statusline-tokens.cache.json"
+    Write-Host "    ~/.claude/statusline-accounts.json"
+    Write-Host "    ~/.claude/statusline-scoped-limits.cache.json"
+    Write-Host "    ~/.claude/statusline-limits.cache.json"
     Write-Host "  Delete them by hand if you want a clean slate."
 }
 

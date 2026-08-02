@@ -1536,7 +1536,7 @@ h1.headline .accent { color: var(--accent); }
         </ol>
 
         <div class="note">
-          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint: no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, or <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second interval.
+          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint: no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. The same reply also carries the 5-hour and weekly figures, which are kept as a fallback for windows that have been idle too long to have heard anything themselves. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second idle interval, or <code>STATUSLINE_SCOPED_ACTIVE_TTL</code> to change the 90-second one used once that model has actually run.
         </div>
       </div>
     </div>

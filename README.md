@@ -201,12 +201,22 @@ The block to **merge** into `settings.json` (if the file already has other keys,
   "statusLine": {
     "type": "command",
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\statusline-tokens.ps1\"",
-    "padding": 0
+    "padding": 0,
+    "refreshInterval": 10
   }
 }
 ```
 
 > If you don't have `pwsh` installed, replace `pwsh` with `powershell` in the command above.
+
+`refreshInterval` re-runs the command every N seconds on top of Claude Code's
+own event-driven updates. Without it, a window that is sitting idle stops
+re-rendering, so it keeps showing whatever it last drew — which matters here
+because the numbers are shared between windows and an idle one would never
+pick up what the others have learned. It also keeps the reset countdowns
+ticking. Ten seconds costs about half a second of work per idle window;
+lower it if you want it snappier, drop it if you only ever run one window.
+Requires Claude Code 2.1.216 or newer.
 
 Save, start a new Claude Code conversation, done. Run the dashboard with:
 
@@ -443,7 +453,18 @@ The OAuth access token is read from `~/.claude/.credentials.json` (the file Clau
 | Variable | Effect |
 |---|---|
 | `STATUSLINE_SCOPED_LIMITS=0` | Disables the segment, the cache read, and the network call entirely (`off` / `false` / `no` also work) |
-| `STATUSLINE_SCOPED_TTL=1800` | Seconds between refreshes; default `900` |
+| `STATUSLINE_SCOPED_TTL=1800` | Seconds between refreshes while the model is idle; default `900` |
+| `STATUSLINE_SCOPED_ACTIVE_TTL=45` | Seconds between refreshes once that model has actually run; default `90` |
+
+Two intervals, because a per-model bar is the one figure Claude Code never
+sends on the hook — the endpoint is its only source, and polling it on a flat
+fifteen-minute timer means a Fable turn lands and the segment sits on a stale
+number long enough to look broken. So the script watches your transcripts for
+turns on a model that has a bar, and when one has run since the last
+successful fetch it refreshes on the shorter interval instead. No usage on
+that model, no extra requests. The failure backoff still overrides both:
+being mid-burst is not a reason to keep knocking on an endpoint that just
+refused you.
 
 With `STATUSLINE_SCOPED_LIMITS=0` the script makes no network calls at all, which is where it stood before this feature.
 
