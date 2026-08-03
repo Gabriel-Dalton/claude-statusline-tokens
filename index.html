@@ -112,7 +112,7 @@
           "name": "When does the Claude Code 5-hour limit reset?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Claude Code sends the reset timestamp to the status line hook as a Unix epoch. statusline-tokens renders it as a countdown plus a local clock time, for example 'resets 2h14m @ 12:38pm', on both the 5-hour and 7-day windows."
+            "text": "Claude Code sends the reset timestamp to the status line hook as a Unix epoch. statusline-tokens renders it as a countdown plus a local clock time and its zone, for example 'resets 2h14m @ 12:38pm PDT', on both the 5-hour and 7-day windows."
           }
         },
         {
@@ -1226,7 +1226,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="term-body">
         <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
         <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm PDT)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1263,7 +1263,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="feature">
         <div class="icon">@</div>
         <h3>Reset countdown</h3>
-        <p>Every window says when it frees up: <code>resets 2h14m @ 12:38pm</code>. Immune to DST, and it survives renders where Claude Code sends no rate-limit data at all.</p>
+        <p>Every window says when it frees up: <code>resets 2h14m @ 12:38pm PDT</code>. The zone is resolved for the reset instant, so a reset past a DST cutover reads correctly, and it survives renders where Claude Code sends no rate-limit data at all.</p>
       </div>
       <div class="feature">
         <div class="icon">›</div>
@@ -1403,7 +1403,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable 5 weekly limit with a yellow percentage, current session, and current context.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
+          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm PDT)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
         </div>
       </div>
     </figure>
@@ -1438,19 +1438,19 @@ h1.headline .accent { color: var(--accent); }
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #0891b2;"><span class="swatch" style="background: #22d3ee;"></span>5h window</td>
-          <td data-col="Sample" class="sample">97% (168.2M tok, $127, resets 12m @ 1:50pm)</td>
+          <td data-col="Sample" class="sample">97% (168.2M tok, $127, resets 12m @ 1:50pm PDT)</td>
           <td data-col="Derivation" class="source"><code>rate_limits.five_hour</code> for % and reset; transcript scan for tokens and cost</td>
           <td data-col="ANSI" class="source">81</td>
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #16a34a;"><span class="swatch" style="background: #4ade80;"></span>7d window</td>
-          <td data-col="Sample" class="sample">25% (412.6M tok, $311, resets 4d6h @ Sun 6am)</td>
+          <td data-col="Sample" class="sample">25% (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</td>
           <td data-col="Derivation" class="source"><code>rate_limits.seven_day</code> for % and reset; transcript scan for tokens and cost</td>
           <td data-col="ANSI" class="source">108</td>
         </tr>
         <tr>
           <td data-col="Segment" class="seg" style="color: #a21caf;"><span class="swatch" style="background: #d787d7;"></span>fable</td>
-          <td data-col="Sample" class="sample">61% (resets 4d6h @ Sun 6am)</td>
+          <td data-col="Sample" class="sample">61% (resets 4d6h @ Sun 6am PDT)</td>
           <td data-col="Derivation" class="source"><code>GET /api/oauth/usage</code> &rarr; <code>limits[]</code> where <code>kind</code> is <code>weekly_scoped</code>; refreshed every 5&nbsp;min off the render path</td>
           <td data-col="ANSI" class="source">176</td>
         </tr>
@@ -1485,7 +1485,7 @@ h1.headline .accent { color: var(--accent); }
     <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable 5 weekly limit at 61 percent in yellow.">
       <div class="term-body">
         <div class="statusline compact">
-          <span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am)</span>
+          <span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span>
         </div>
       </div>
     </figure>
@@ -1708,7 +1708,7 @@ h1.headline .accent { color: var(--accent); }
 
       <div class="faq-item">
         <h3 class="faq-q">When does the Claude Code 5-hour limit reset?</h3>
-        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time, <code>resets 2h14m @ 12:38pm</code>, on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
+        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time and its zone, <code>resets 2h14m @ 12:38pm PDT</code>, on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
       </div>
 
       <div class="faq-item">

@@ -914,10 +914,91 @@ function Fmt-Relative([TimeSpan]$ts) {
     return ('{0}d' -f $days)
 }
 
-# Local clock time, lowercase am/pm; optional day-of-week prefix for far-out
-# resets. ToLocalTime() resolves the offset for that specific instant against
-# the OS timezone database, so a reset on the far side of a DST boundary
-# prints the correct wall clock rather than one shifted by an hour.
+# Timezone abbreviation for the instant being printed — "PDT" in summer,
+# "PST" in winter, so a bare clock time can't be read against the wrong zone.
+#
+# Windows exposes only long names ("Pacific Daylight Time"), and abbreviating
+# them by initials is unsafe: "GMT Standard Time" is London, whose real
+# abbreviations are GMT/BST, not the "GST" initials would produce — that is
+# Gulf Standard Time, four hours away. So the well-known zones are mapped
+# explicitly, and anything unmapped — including a non-English Windows, where
+# these names are localized — falls back to a numeric UTC offset, which is
+# unambiguous everywhere. Set STATUSLINE_TZ_LABEL=0 to drop the suffix.
+$tzLabelEnabled = -not ($env:STATUSLINE_TZ_LABEL -match '^(0|off|false|no)$')
+$tzAbbrevByName = @{
+    'UTC'                            = 'UTC'
+    'Coordinated Universal Time'     = 'UTC'
+    # North America
+    'Hawaiian Standard Time'         = 'HST'
+    'Alaskan Standard Time'          = 'AKST'; 'Alaskan Daylight Time'          = 'AKDT'
+    'Pacific Standard Time'          = 'PST';  'Pacific Daylight Time'          = 'PDT'
+    'Mountain Standard Time'         = 'MST';  'Mountain Daylight Time'         = 'MDT'
+    'US Mountain Standard Time'      = 'MST'
+    'Central Standard Time'          = 'CST';  'Central Daylight Time'          = 'CDT'
+    'Eastern Standard Time'          = 'EST';  'Eastern Daylight Time'          = 'EDT'
+    'US Eastern Standard Time'       = 'EST';  'US Eastern Daylight Time'       = 'EDT'
+    'Atlantic Standard Time'         = 'AST';  'Atlantic Daylight Time'         = 'ADT'
+    'Newfoundland Standard Time'     = 'NST';  'Newfoundland Daylight Time'     = 'NDT'
+    # Europe, Middle East, Africa
+    'GMT Standard Time'              = 'GMT';  'GMT Daylight Time'              = 'BST'
+    'W. Europe Standard Time'        = 'CET';  'W. Europe Daylight Time'        = 'CEST'
+    'Central Europe Standard Time'   = 'CET';  'Central Europe Daylight Time'   = 'CEST'
+    'Central European Standard Time' = 'CET';  'Central European Daylight Time' = 'CEST'
+    'Romance Standard Time'          = 'CET';  'Romance Daylight Time'          = 'CEST'
+    'E. Europe Standard Time'        = 'EET';  'E. Europe Daylight Time'        = 'EEST'
+    'GTB Standard Time'              = 'EET';  'GTB Daylight Time'              = 'EEST'
+    'FLE Standard Time'              = 'EET';  'FLE Daylight Time'              = 'EEST'
+    'W. Central Africa Standard Time' = 'WAT'
+    'South Africa Standard Time'     = 'SAST'
+    # Windows and ICU disagree on these two: the Windows registry calls them
+    # Jerusalem/Malay Peninsula, ICU (PowerShell 7 on macOS and Linux) calls
+    # them Israel/Singapore. Both spellings are listed rather than guessed at.
+    'Jerusalem Standard Time'        = 'IST';  'Jerusalem Daylight Time'        = 'IDT'
+    'Israel Standard Time'           = 'IST';  'Israel Daylight Time'           = 'IDT'
+    # Asia-Pacific
+    'India Standard Time'            = 'IST'
+    'China Standard Time'            = 'CST'
+    'Malay Peninsula Standard Time'  = 'SGT'
+    'Singapore Standard Time'        = 'SGT'
+    'Tokyo Standard Time'            = 'JST'
+    'Korea Standard Time'            = 'KST'
+    'W. Australia Standard Time'     = 'AWST'
+    'AUS Central Standard Time'      = 'ACST'
+    'Cen. Australia Standard Time'   = 'ACST'; 'Cen. Australia Daylight Time'   = 'ACDT'
+    'AUS Eastern Standard Time'      = 'AEST'; 'AUS Eastern Daylight Time'      = 'AEDT'
+    'E. Australia Standard Time'     = 'AEST'
+    'Tasmania Standard Time'         = 'AEST'; 'Tasmania Daylight Time'         = 'AEDT'
+    'New Zealand Standard Time'      = 'NZST'; 'New Zealand Daylight Time'      = 'NZDT'
+}
+# $zone defaults to the OS timezone; it is a parameter so the tests can ask
+# what a user in another zone would see.
+function Get-TzAbbrev([DateTime]$utc, $zone) {
+    # Same Kind trap as below: DateTimeOffset reads an Unspecified value as
+    # local, which would pick the DST answer for the wrong instant.
+    if ($utc.Kind -ne [DateTimeKind]::Utc) {
+        $utc = [DateTime]::SpecifyKind($utc, [DateTimeKind]::Utc)
+    }
+    $tz = $zone
+    if ($null -eq $tz) { $tz = [TimeZoneInfo]::Local }
+    # DST is decided per instant, not per zone: a reset that lands after the
+    # November cutover is PST even while today is still PDT.
+    if ($tz.IsDaylightSavingTime([DateTimeOffset]::new($utc))) { $name = $tz.DaylightName }
+    else                                                       { $name = $tz.StandardName }
+    if ($tzAbbrevByName.ContainsKey($name)) { return $tzAbbrevByName[$name] }
+    $off = $tz.GetUtcOffset($utc)
+    if ($off -eq [TimeSpan]::Zero) { return 'UTC' }
+    $sign = '+'; if ($off.Ticks -lt 0) { $sign = '-' }
+    $h = [math]::Abs($off.Hours)
+    $m = [math]::Abs($off.Minutes)
+    if ($m -eq 0) { return ('UTC{0}{1}' -f $sign, $h) }
+    return ('UTC{0}{1}:{2:D2}' -f $sign, $h, $m)
+}
+
+# Local clock time, lowercase am/pm, with a zone suffix; optional day-of-week
+# prefix for far-out resets. ToLocalTime() resolves the offset for that
+# specific instant against the OS timezone database, so a reset on the far
+# side of a DST boundary prints the correct wall clock rather than one
+# shifted by an hour.
 function Fmt-AbsLocal([DateTime]$utc, [bool]$includeDay) {
     # ToLocalTime() only shifts a value whose Kind is Utc. On an Unspecified
     # one it is a silent no-op, printing the UTC time as though it were local.
@@ -931,11 +1012,13 @@ function Fmt-AbsLocal([DateTime]$utc, [bool]$includeDay) {
     $h12 = $h % 12; if ($h12 -eq 0) { $h12 = 12 }
     if ($m -eq 0) { $time = '{0}{1}' -f $h12, $ampm }
     else          { $time = '{0}:{1:D2}{2}' -f $h12, $m, $ampm }
+    $zone = ''
+    if ($tzLabelEnabled) { $zone = ' ' + (Get-TzAbbrev $utc) }
     if ($includeDay) {
         $day = $local.ToString('ddd', [Globalization.CultureInfo]::InvariantCulture)
-        return ('{0} {1}' -f $day, $time)
+        return ('{0} {1}{2}' -f $day, $time, $zone)
     }
-    return $time
+    return ('{0}{1}' -f $time, $zone)
 }
 
 # "2h15m @ 7:30pm" — returns $null on missing/unparseable/elapsed timestamps.

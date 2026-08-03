@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Reset times name their time zone.** `resets 2h14m @ 12:38pm` gave a wall-clock time with nothing to read it against — fine on the machine that drew it, ambiguous the moment the line is pasted into an issue, a chat, or a screenshot. It now reads `resets 2h14m @ 12:38pm PDT`.
+
+  The abbreviation is chosen for **the instant being printed**, not for today: a reset landing after November's cutover renders `PST` while the current time is still `PDT`. That falls out of asking `TimeZoneInfo` about the reset instant rather than about `now`.
+
+  Windows exposes only long names (`Pacific Daylight Time`), so the script carries a lookup table rather than abbreviating by initials — initials turn Windows' own name for London, `GMT Standard Time`, into `GST`, a real zone four hours east. Zones outside the table, including any non-English Windows where these names are localized, print a numeric offset instead: `12:38pm UTC+5:45`. Wrong is worse than verbose.
+
+  `STATUSLINE_TZ_LABEL=0` (or `off` / `false` / `no`) restores the bare clock time.
+
+- **`tests/test-tz.ps1`**, 35 assertions: every mapped zone in both a summer and a winter instant (including the southern hemisphere, where those invert), the offset fallback at whole, negative and `:45` offsets, an `Unspecified`-Kind stamp that must not be read as local, and the suffix as it reaches the rendered line with the flag on and off.
+
 ### Fixed
 
 - **Token counts roll over to `B` past a billion.** `Fmt-Tokens` topped out at `M`, so a 7-day window on a heavy plan drew `1354.0M tok` — seven characters of the widest segment on the line, spent saying something `1.35B` says in five. `B` carries two decimals: one would round a 60M-token swing away.

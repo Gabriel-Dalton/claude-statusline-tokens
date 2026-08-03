@@ -5,7 +5,7 @@
 **A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows, your Fable 5 weekly limit, AND your current work session, with multi-account awareness.**
 
 ```
-my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am) | session 850k ($3.40) | ctx 23k (2%)
+my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm PDT) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT) | session 850k ($3.40) | ctx 23k (2%)
 ```
 
 [Install](#install) · [How it works](docs/ARCHITECTURE.md) · [Pricing math](docs/PRICING.md) · [Multi-account](docs/MULTI-ACCOUNT.md) · [Customize](docs/CUSTOMIZE.md) · [Contributing](CONTRIBUTING.md)
@@ -30,7 +30,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **Color-coded headroom** — the 5h and 7d percentages tint **green** (< 50%), **yellow** (50–79%), **red** (≥ 80%) so a glance tells you where you stand. Tweak the bands with `STATUSLINE_PCT_THRESHOLDS=warn,crit` (e.g. `STATUSLINE_PCT_THRESHOLDS=65,85`)
 - **Percentage + tokens + $ in one line** for both the 5h block and the 7d weekly limit
 - **Fable 5 weekly limit** — the separate weekly quota Claude Code meters premium models on, which it tracks internally but **does not send to the status line hook**. This is the only status line that shows it. See [Fable 5 weekly limit](#fable-5-weekly-limit)
-- **Reset countdown** on both windows — `resets 2h14m @ 12:38pm` — so you know whether to push on or take a break. Immune to DST, and it survives renders where Claude Code omits the field
+- **Reset countdown** on both windows — `resets 2h14m @ 12:38pm PDT` — so you know whether to push on or take a break. The zone is resolved for the instant being printed, so a reset on the far side of a DST cutover reads correctly; drop the suffix with `STATUSLINE_TZ_LABEL=0`. Immune to DST, and it survives renders where Claude Code omits the field
 - **Context fill %** from `context_window.used_percentage` — a raw `ctx 63.0k` reads like a third of a 200k window but is 6% of a 1M one, so the percentage is the only signal that means the same thing on every model
 - **Verify the numbers yourself** with [`scripts/verify-tokens.ps1`](scripts/verify-tokens.ps1) — an independent re-derivation that cross-checks the status line's own arithmetic
 - **Session-based "current burst" indicator** that captures continuous activity regardless of clock-midnight or account switches — see [`docs/SESSION.md`](docs/SESSION.md)
@@ -407,17 +407,18 @@ If `rate_limits` is missing for a given turn (typical at session start, before C
 Each window segment ends with how long is left before that quota frees up:
 
 ```
-5h 42% (15.3M tok, $25.07, resets 2h14m @ 12:38pm)
-7d 18% (15.3M tok, $25.07, resets 6d18h @ Wed 5:34am)
+5h 42% (15.3M tok, $25.07, resets 2h14m @ 12:38pm PDT)
+7d 18% (15.3M tok, $25.07, resets 6d18h @ Wed 5:34am PDT)
 ```
 
-The countdown reads `<1m` / `45m` / `2h14m` / `6d18h`, followed by the wall-clock time it lands on — day-of-week included for the 7-day window.
+The countdown reads `<1m` / `45m` / `2h14m` / `6d18h`, followed by the wall-clock time it lands on and the zone that time is in — day-of-week included for the 7-day window.
 
-Three details worth knowing:
+Four details worth knowing:
 
 - **Shape-agnostic parsing.** `resets_at` arrives from Claude Code as a Unix epoch, but this script's own cache round-trips ISO-8601 and `ConvertFrom-Json` sometimes yields a `[DateTime]`. All three are accepted. (Parsing only the ISO form is a silent failure: the parse throws, the countdown disappears, and it looks exactly like Claude Code never sent the field.)
 - **Survives a missing payload.** The last-seen reset time is cached, so the countdown keeps running on renders where the hook sends no `rate_limits` at all. It's scoped to the signed-in account — after an account switch the previous org's reset time is discarded rather than replayed — and anything already elapsed is dropped rather than shown as a stale or negative value.
 - **Timezone-independent.** Every instant is held as UTC internally and converted to local time only at render, using the OS timezone database. The "time left" figure is a UTC-to-UTC delta, so a DST change can't skew it, and the wall-clock time resolves the offset for that specific instant — a reset landing on the far side of a DST boundary prints correctly rather than an hour off.
+- **The zone is named, per instant.** `12:38pm` alone is only meaningful if you already know which clock it's on, so the abbreviation follows it: `12:38pm PDT`. It's chosen for the instant being printed rather than for today, so a reset that lands after November's cutover reads `PST` while the current time is still `PDT`. Zones outside the mapped set — and any non-English Windows, where these names are localized — fall back to a numeric offset, `12:38pm UTC+5:45`, rather than a guessed abbreviation: initialising Windows' own name for London ("GMT Standard Time") would produce `GST`, a real zone four hours east. Set `STATUSLINE_TZ_LABEL=0` (or `off` / `false` / `no`) to drop the suffix and get the bare clock time back.
 
 > The `5h` and `7d` numbers are scoped to your **current Claude account**, so they always match the percentage Claude Code itself is showing you. The `session` number tracks your **current burst of work** independent of which account is signed in — so a mid-day account switch (or the clock crossing midnight in the middle of a coding session) doesn't fragment it. Read [`docs/SESSION.md`](docs/SESSION.md) and [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md) for the full models.
 
@@ -426,7 +427,7 @@ Three details worth knowing:
 Claude Code meters its premium models on a **separate weekly window** from your plan-wide weekly limit. Run `/usage` and you'll see it as its own bar; internally Claude Code calls that bucket `seven_day_overage_included` and labels it "Fable 5 limit". Burn through it and Fable stops being available for the rest of the week while your ordinary weekly limit still has room — which is exactly the situation you want warning of in advance.
 
 ```
-7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am)
+7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT)
 ```
 
 **The status line hook cannot see this number.** Claude Code assembles the hook payload from two buckets only:

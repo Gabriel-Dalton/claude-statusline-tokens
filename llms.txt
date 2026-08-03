@@ -11,7 +11,7 @@ License: MIT
 ## What it renders
 
 ```
-my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am) | fable 61% (resets 4d6h @ Sun 6am) | session 8.2M ($6.18) | ctx 63.0k
+my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm PDT) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT) | session 8.2M ($6.18) | ctx 63.0k
 ```
 
 Eight segments: working directory, git branch, model, 5-hour window, 7-day window, Fable 5 weekly limit, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
@@ -67,7 +67,7 @@ Each turn is priced with the model recorded on that turn, so mixed-model session
 
 ## Rate-limit resets
 
-Claude Code passes `rate_limits.five_hour.resets_at` and `rate_limits.seven_day.resets_at` to the status-line hook as a Unix epoch. The script renders each as a countdown plus local clock time, e.g. `resets 2h14m @ 12:38pm`. Timestamps are held in UTC internally and converted to local time only at render, so the countdown is unaffected by daylight saving transitions.
+Claude Code passes `rate_limits.five_hour.resets_at` and `rate_limits.seven_day.resets_at` to the status-line hook as a Unix epoch. The script renders each as a countdown plus local clock time and its zone, e.g. `resets 2h14m @ 12:38pm PDT`. Timestamps are held in UTC internally and converted to local time only at render, so the countdown is unaffected by daylight saving transitions; the zone abbreviation is resolved for the reset instant rather than for the present, and zones without a mapped abbreviation print a numeric UTC offset. `STATUSLINE_TZ_LABEL=0` drops the suffix.
 
 ## Documentation
 

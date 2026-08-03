@@ -64,6 +64,24 @@ $cacheTtlSec = 20
 
 Lower = fresher numbers, slower renders during bursts. Higher = snappier, staler. Set to `0` to disable caching entirely. The cache file is at `~/.claude/statusline-tokens.cache.json`; delete it to force a fresh scan once.
 
+## Reset time zone
+
+Reset times print in your OS time zone with the abbreviation for that instant — `resets 2h14m @ 12:38pm PDT`. To go back to the bare clock time:
+
+```powershell
+$env:STATUSLINE_TZ_LABEL = '0'         # off | false | no also work
+```
+
+There is no override for *which* zone is used: the whole line is drawn on one machine for one person, and a clock time in a zone that isn't the one on your wall is a worse default than either the correct local time or a plain UTC offset. Change the OS time zone if you want a different one, and the status line follows.
+
+Which abbreviation you get comes from a lookup table in the script, keyed by the long name Windows reports (`Pacific Daylight Time` -> `PDT`), with a standard and a daylight entry per zone. Anything not in the table renders a numeric offset instead — `12:38pm UTC+5:45` — and that is deliberate rather than a gap to be filled by cleverness: deriving initials from the long name gives `GST` for Windows' `GMT Standard Time`, which is London labelled as a zone four hours east. A non-English Windows localizes those names, so it takes the same offset path.
+
+To add your zone, put its exact `StandardName` and `DaylightName` in `$tzAbbrevByName`:
+
+```powershell
+[TimeZoneInfo]::Local | Select-Object Id, StandardName, DaylightName
+```
+
 ## Fable 5 weekly limit
 
 Two environment variables, both read at render time — no edit to the script needed:

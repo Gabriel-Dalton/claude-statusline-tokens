@@ -53,7 +53,8 @@ $suites = @(
     @{ file = 'test-sync.ps1';      what = 'shared store: one set of numbers across windows' },
     @{ file = 'test-scoped.ps1';    what = 'per-model bar and its activity-driven refresh' },
     @{ file = 'test-reset.ps1';     what = 'token windows aligned to the quota, not the clock' },
-    @{ file = 'test-authority.ps1'; what = 'information age decides, so a bucket can be corrected' }
+    @{ file = 'test-authority.ps1'; what = 'information age decides, so a bucket can be corrected' },
+    @{ file = 'test-tz.ps1';        what = 'reset times name their zone, per instant, not per today' }
 )
 
 Write-Host "testing $ScriptPath`n"
