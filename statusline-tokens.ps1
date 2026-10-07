@@ -1077,6 +1077,143 @@ $cachePath         = [System.IO.Path]::Combine($userProfile, '.claude', 'statusl
 $globalConfigPath  = [System.IO.Path]::Combine($userProfile, '.claude.json')
 $accountsPath      = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-accounts.json')
 
+# --- token totals from your other devices ----------------------------------
+# The percentages on this line are account-wide: the server counts every
+# device signed into the account. The token and cost totals beside them are
+# not. They are summed from the transcripts under ~/.claude/projects, and
+# those only ever record what ran on this machine. Work a week on a desktop,
+# open a laptop, and the laptop reads "7d 97% (500.0k tok)": a true
+# percentage next to a total that covers a sliver of what produced it.
+#
+# Nothing the server exposes closes that gap. The usage endpoint returns
+# percentages and reset stamps, never token counts. So the devices have to
+# tell each other, and the only channel a local script has is a folder they
+# can all see. Point STATUSLINE_DEVICES_DIR at one (OneDrive, Dropbox,
+# Syncthing, a network share) on every machine and each one:
+#   * writes statusline-device-<id>.json there, its own turns from the last
+#     seven days rolled into five-minute buckets
+#   * adds every other device's buckets to its 5h and 7d totals
+# Unset, nothing is written or read outside ~/.claude and the totals stay
+# local, exactly as before.
+#
+# Buckets rather than turns, so the file stays around 100 KB at the outside
+# instead of growing with every message, and so no message ids, paths or
+# prompts leave the machine: a bucket is a time, a token count and a cost.
+# The price is precision at the window edge, where a peer's bucket is counted
+# whole if any part of it falls inside the window (five minutes at most).
+#
+# The device id defaults to the machine name. Two machines sharing a name
+# would overwrite each other's file, so STATUSLINE_DEVICE_ID overrides it.
+$devicesDir     = ([string]$env:STATUSLINE_DEVICES_DIR).Trim()
+$deviceId       = ([string]$env:STATUSLINE_DEVICE_ID).Trim()
+if ([string]::IsNullOrEmpty($deviceId)) { $deviceId = [string][Environment]::MachineName }
+$deviceId       = ($deviceId.ToLowerInvariant() -replace '[^a-z0-9_-]', '-').Trim('-')
+$devicesEnabled = (-not [string]::IsNullOrEmpty($devicesDir)) -and
+                  (-not [string]::IsNullOrEmpty($deviceId)) -and
+                  (Test-Path -LiteralPath $devicesDir -PathType Container)
+$deviceSchema    = 1
+$deviceBucketSec = 300
+# A synced folder re-uploads the file on every change, so an active session
+# is held to one write a minute rather than one per scan.
+$deviceWriteMinSec = 60
+$deviceFilePrefix  = 'statusline-device-'
+# orgTag -> @{ bucketStartUnixSeconds -> @(tokens, cost) }, filled by
+# Apply-Turn during the scan.
+$deviceBuckets = @{}
+$unixEpoch     = New-Object DateTime(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+
+# Quota windows are per-account, so buckets are filed under the account that
+# produced them. A hash rather than the organization id itself, because this
+# is the one file the script writes somewhere a sync client will upload.
+$orgTagMemo = @{}
+function Get-OrgTag([string]$Org) {
+    if ($null -eq $Org) { $Org = '' }
+    if ($script:orgTagMemo.ContainsKey($Org)) { return $script:orgTagMemo[$Org] }
+    $tag = 'none'
+    if ($Org -ne '') {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $tag = [BitConverter]::ToString(
+                $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Org))).Replace('-', '').Substring(0, 16).ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    }
+    $script:orgTagMemo[$Org] = $tag
+    return $tag
+}
+
+# Rewrites this device's file when its contents changed. Keys are emitted in
+# sorted order so an unchanged scan produces a byte-identical body and the
+# comparison below can skip the write.
+function Write-DeviceFile([string]$Dir, [string]$Id, $Buckets) {
+    $path = [System.IO.Path]::Combine($Dir, ($script:deviceFilePrefix + $Id + '.json'))
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append(('{{"schemaVersion":{0},"device":"{1}","bucketSeconds":{2},"orgs":{{' -f
+        $script:deviceSchema, $Id, $script:deviceBucketSec))
+    $firstOrg = $true
+    foreach ($tag in @($Buckets.Keys | Sort-Object)) {
+        if (-not $firstOrg) { [void]$sb.Append(',') }
+        $firstOrg = $false
+        [void]$sb.Append(('"{0}":[' -f $tag))
+        $firstRow = $true
+        foreach ($start in @($Buckets[$tag].Keys | Sort-Object)) {
+            $row = $Buckets[$tag][$start]
+            if (-not $firstRow) { [void]$sb.Append(',') }
+            $firstRow = $false
+            [void]$sb.Append(('[{0},{1},{2:0.####}]' -f [long]$start, [long]$row[0], [double]$row[1]))
+        }
+        [void]$sb.Append(']')
+    }
+    [void]$sb.Append('}}')
+    $body = $sb.ToString()
+    try {
+        if (Test-Path -LiteralPath $path) {
+            $age = ([DateTime]::UtcNow - (Get-Item -LiteralPath $path).LastWriteTimeUtc).TotalSeconds
+            if ($age -ge 0 -and $age -lt $script:deviceWriteMinSec) { return }
+            if ([System.IO.File]::ReadAllText($path) -eq $body) { return }
+        }
+        [System.IO.File]::WriteAllText($path, $body, (New-Object System.Text.UTF8Encoding($false)))
+    } catch { Write-DebugLog $_ -Scope 'device-file-write' }
+}
+
+# Sums what every other device reported for this account inside each window.
+# A file that is missing, half-synced or malformed contributes nothing and
+# never stops the render: the folder is written by other machines and by a
+# sync client, so its contents are treated as input, not as state.
+function Read-PeerDevices([string]$Dir, [string]$Id, [string]$Tag,
+                          [DateTime]$NowRef, [DateTime]$Cut5h, [DateTime]$Cut7d) {
+    $sum = @{ tok5h = [long]0; cost5h = 0.0; tok7d = [long]0; cost7d = 0.0; devices = 0 }
+    $own = $script:deviceFilePrefix + $Id + '.json'
+    $files = @(Get-ChildItem -LiteralPath $Dir -Filter ($script:deviceFilePrefix + '*.json') -File -ErrorAction SilentlyContinue)
+    foreach ($f in $files) {
+        if ($f.Name -eq $own) { continue }
+        # Seven days of buckets is about 100 KB. Anything far past that is
+        # not a file this script wrote.
+        if ($f.Length -le 0 -or $f.Length -gt 5MB) { continue }
+        try {
+            $doc = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json -ErrorAction Stop
+            if ([int]$doc.schemaVersion -ne $script:deviceSchema) { continue }
+            $span = [long]$doc.bucketSeconds
+            if ($span -le 0 -or $span -gt 3600) { continue }
+            if ($null -eq $doc.orgs -or $doc.orgs.PSObject.Properties.Match($Tag).Count -eq 0) { continue }
+            $counted = $false
+            foreach ($row in @($doc.orgs.$Tag)) {
+                if ($null -eq $row -or @($row).Count -lt 3) { continue }
+                $start = [long]$row[0]; $tok = [long]$row[1]; $cost = [double]$row[2]
+                if ($start -le 0 -or $tok -le 0 -or $cost -lt 0) { continue }
+                $startUtc = $script:unixEpoch.AddSeconds($start)
+                # A bucket from the future is another machine's clock being
+                # wrong, and there is no window it can honestly be filed in.
+                if ($startUtc -gt $NowRef) { continue }
+                $endUtc = $startUtc.AddSeconds($span)
+                if ($endUtc -gt $Cut7d) { $sum.tok7d += $tok; $sum.cost7d += $cost; $counted = $true }
+                if ($endUtc -gt $Cut5h) { $sum.tok5h += $tok; $sum.cost5h += $cost; $counted = $true }
+            }
+            if ($counted) { $sum.devices++ }
+        } catch { Write-DebugLog $_ -Scope 'device-file-read' }
+    }
+    return $sum
+}
+
 # --- detect current account ----------------------------------------------
 # ~/.claude.json carries oauthAccount.{organizationUuid, emailAddress, ...}
 # We use organizationUuid as the stable identifier — it survives token
@@ -1543,6 +1680,26 @@ function Apply-Turn($turn) {
             }
         }
     }
+    # File the turn for the other devices, under the account that owned it
+    # rather than the one signed in now, so a peer on either account finds
+    # its own usage. Same attribution rule as $isCurrent above.
+    if ($script:devicesEnabled) {
+        $tag = $null
+        if (-not $script:currentAccount)        { $tag = Get-OrgTag '' }
+        elseif ($turnAcct -and $turnAcct.org)   { $tag = Get-OrgTag ([string]$turnAcct.org) }
+        if ($tag) {
+            $sec   = [long][math]::Floor(($t - $script:unixEpoch).TotalSeconds)
+            $start = $sec - ($sec % $script:deviceBucketSec)
+            if (-not $script:deviceBuckets.ContainsKey($tag)) { $script:deviceBuckets[$tag] = @{} }
+            $rows = $script:deviceBuckets[$tag]
+            if ($rows.ContainsKey($start)) {
+                $rows[$start][0] = [long]$rows[$start][0] + [long]$turn.sum
+                $rows[$start][1] = [double]$rows[$start][1] + [double]$turn.cost
+            } else {
+                $rows[$start] = @([long]$turn.sum, [double]$turn.cost)
+            }
+        }
+    }
     # Capture every turn (any account) for session detection
     # below — session is account-independent.
     [void]$script:turns.Add(@{ ticks = $turn.ticks; sum = $turn.sum; cost = $turn.cost })
@@ -1658,6 +1815,21 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             turns          = $turnsForCache
         }
     }
+}
+
+# --- fold in the other devices --------------------------------------------
+# Only on a scan. On a cache HIT the totals restored above already include
+# what the peers reported when that scan ran, so the two paths agree and a
+# render inside the TTL costs no extra file reads. The session segment is
+# left alone on purpose: it describes the burst of work at this keyboard.
+if ($devicesEnabled -and -not $useCache) {
+    # Published only when this render actually scanned. Without a projects
+    # directory there is nothing to report, and an empty file would erase
+    # whatever this device had told the others.
+    if ($null -ne $turns) { Write-DeviceFile $devicesDir $deviceId $deviceBuckets }
+    $peers = Read-PeerDevices $devicesDir $deviceId (Get-OrgTag $currentOrgKey) $nowUtc $cut5h $cut7d
+    $tok5h  += $peers.tok5h;  $cost5h += $peers.cost5h
+    $tok7d  += $peers.tok7d;  $cost7d += $peers.cost7d
 }
 
 # --- session boundary ----------------------------------------------------

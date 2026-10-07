@@ -99,6 +99,21 @@ On consecutive failed requests the interval doubles, capped at an hour, and rese
 
 The cache lives at `~/.claude/statusline-scoped-limits.cache.json` and the spawn guard at `~/.claude/statusline-scoped-limits.lock`. Delete the cache to force a refetch on the next render. If the segment is showing `--%`, the cache is over three hours stale — usually an expired OAuth token, which resolves itself once Claude Code renews it.
 
+## Totals across devices
+
+Off by default. Two environment variables, both read at render time:
+
+```powershell
+$env:STATUSLINE_DEVICES_DIR = "$env:OneDrive\claude-statusline"  # any folder every machine can see
+$env:STATUSLINE_DEVICE_ID   = 'laptop'                           # optional; defaults to the computer name
+```
+
+The token and cost totals are summed from local transcripts, so on their own they cover one machine while the percentage beside them covers the account. With `STATUSLINE_DEVICES_DIR` set, each device writes `statusline-device-<id>.json` into that folder (seven days of its own turns in five-minute buckets, filed under a hash of the organization id) and adds every other device's buckets to its `5h` and `7d` totals. `session` stays local.
+
+The file is rewritten at most once a minute, and only when its contents changed, so a sync client is not asked to re-upload it on every render. A peer file that is missing, half-synced or malformed contributes nothing for that render and is picked up again on the next scan. Delete a retired machine's file to drop it early; otherwise its buckets age out on their own after seven days.
+
+Set `STATUSLINE_DEVICE_ID` when two machines share a computer name, since they would otherwise overwrite each other's file.
+
 ## Token format
 
 ```powershell
