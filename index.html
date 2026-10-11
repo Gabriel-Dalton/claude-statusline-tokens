@@ -136,7 +136,7 @@
           "name": "Does it work with more than one account or more than one computer?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes to both. A session started in its own config folder (CLAUDE_CONFIG_DIR, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers. Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with STATUSLINE_DEVICES_DIR and they add each other's totals. Only times, token counts and costs are written there."
+            "text": "Yes to both. A session started in its own config folder (CLAUDE_CONFIG_DIR, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers. Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with STATUSLINE_DEVICES_DIR and they add each other's totals. The file each computer writes there holds that computer's name, a hash of the account's organization id, and five-minute totals of tokens and cost. If the folder is synced by a cloud service, the file goes wherever that service stores it."
           }
         },
         {
@@ -144,7 +144,7 @@
           "name": "Does it send my data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed."
+            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed. Cross-device totals are off by default. If you turn them on, the script also writes one small file to the shared folder you choose, holding the computer's name, a hash of the organization id and token and cost totals; where that folder syncs to is up to you."
           }
         }
       ]
@@ -1748,13 +1748,13 @@ h1.headline .accent { color: var(--accent); }
       <div class="faq-item">
         <h3 class="faq-q">Does it work with more than one account or more than one computer?</h3>
         <p class="faq-a">Yes to both. A session started in its own config folder (<code>CLAUDE_CONFIG_DIR</code>, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers.</p>
-        <p class="faq-a">Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with <code>STATUSLINE_DEVICES_DIR</code> and they add each other's totals. Only times, token counts and costs are written there.</p>
+        <p class="faq-a">Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with <code>STATUSLINE_DEVICES_DIR</code> and they add each other's totals. The file each computer writes there holds that computer's name, a hash of the account's organization id, and five-minute totals of tokens and cost. If the folder is synced by a cloud service, the file goes wherever that service stores it.</p>
       </div>
 
       <div class="faq-item">
         <h3 class="faq-q">Does it send my data anywhere?</h3>
         <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
-        <p class="faq-a">The exception is the Fable limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
+        <p class="faq-a">The exception is the Fable limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed. Cross-device totals are off by default. If you turn them on, the script also writes one small file to the shared folder you choose, holding the computer's name, a hash of the organization id and token and cost totals; where that folder syncs to is up to you.</p>
       </div>
     </div>
   </div>
