@@ -63,7 +63,7 @@
       "author": { "@type": "Person", "name": "Gabriel Dalton" },
       "featureList": [
         "Token totals for the 5-hour and 7-day rate-limit windows",
-        "Fable 5 weekly limit, which Claude Code does not send to the status line hook",
+        "Fable weekly limit, which Claude Code does not send to the status line hook",
         "API-equivalent dollar cost, priced per turn per model",
         "Countdown to when each rate-limit window resets",
         "Percentage colour-shifts green to yellow to red as headroom disappears",
@@ -101,7 +101,7 @@
         },
         {
           "@type": "Question",
-          "name": "How do I see my Fable 5 weekly limit in Claude Code?",
+          "name": "How do I see my Fable weekly limit in Claude Code?",
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "Claude Code meters premium models on a weekly window separate from the plan-wide weekly limit, shown as its own bar in /usage. It is not included in the status line hook payload, which carries only the five_hour and seven_day buckets, so no status line can read it from the hook. statusline-tokens fetches it from the same endpoint /usage uses, where it arrives as a weekly_scoped entry, refreshes it every 15 minutes in a detached process so the render never waits on the network, and shows it as a 'fable 61%' segment with its own reset countdown."
@@ -120,7 +120,7 @@
           "name": "Which Claude models does the cost calculation cover?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Claude Fable 5 and Mythos 5 at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session that mixes models still totals correctly."
+            "text": "Claude Fable and Mythos at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session that mixes models still totals correctly."
           }
         },
         {
@@ -136,7 +136,7 @@
           "name": "Does it send my data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable 5 weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed."
+            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed."
           }
         }
       ]
@@ -1177,13 +1177,13 @@ h1.headline .accent { color: var(--accent); }
     <a class="brand" href="./">
       <span class="mark">›</span>
       <span class="name">statusline-tokens</span>
-      <span class="tag">v0.5.0</span>
+      <span class="tag">v0.7.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#headroom">Headroom</a>
       <a href="#anatomy">Anatomy</a>
-      <a href="#fable">Fable&nbsp;5</a>
+      <a href="#fable">Fable</a>
       <a href="#install">Install</a>
       <a href="#methodology">Methodology</a>
       <a href="#faq">FAQ</a>
@@ -1205,7 +1205,7 @@ h1.headline .accent { color: var(--accent); }
     </h1>
 
     <p class="lede">
-      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath: raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable&nbsp;5 weekly limit</a> Claude Code never sends to a status line at all.
+      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath: raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable weekly limit</a> Claude Code never sends to a status line at all.
     </p>
 
     <div class="cta">
@@ -1219,7 +1219,7 @@ h1.headline .accent { color: var(--accent); }
       </a>
     </div>
 
-    <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, the Fable 5 weekly limit, the current session, and context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green; the Fable percentage is yellow at 61%.">
+    <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, the Fable weekly limit, the current session, and context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green; the Fable percentage is yellow at 61%.">
       <div class="titlebar">
         <span class="tb-label">claude-code · powershell</span>
       </div>
@@ -1252,7 +1252,7 @@ h1.headline .accent { color: var(--accent); }
       </div>
       <div class="feature">
         <div class="icon">F</div>
-        <h3>Fable&nbsp;5 weekly limit</h3>
+        <h3>Fable weekly limit</h3>
         <p>The premium-model window Claude Code meters separately, and <strong>does not send to any status line</strong>. Fetched from the endpoint <code>/usage</code> reads, so you see it coming. <a href="#fable">How it works</a>.</p>
       </div>
       <div class="feature">
@@ -1299,7 +1299,7 @@ h1.headline .accent { color: var(--accent); }
             <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
           </tr>
           <tr>
-            <td class="feat">Fable 5 weekly limit</td>
+            <td class="feat">Fable weekly limit</td>
             <td data-col="Default"><span class="cross">—</span></td>
             <td data-col="claude-powerline"><span class="cross">—</span></td>
             <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
@@ -1400,7 +1400,7 @@ h1.headline .accent { color: var(--accent); }
       </p>
     </div>
 
-    <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable 5 weekly limit with a yellow percentage, current session, and current context.">
+    <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable weekly limit with a yellow percentage, current session, and current context.">
       <div class="term-body">
         <div class="statusline compact">
           <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm PDT)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
@@ -1475,14 +1475,14 @@ h1.headline .accent { color: var(--accent); }
 <section class="section" id="fable">
   <div class="shell">
     <div class="section-head">
-      <div class="section-eyebrow">New in v0.5.0</div>
-      <h2 class="section-title">The Fable&nbsp;5 limit no status line could show.</h2>
+      <div class="section-eyebrow">Per-model weekly limit</div>
+      <h2 class="section-title">The Fable limit no status line could show.</h2>
       <p class="section-kicker">
         Claude Code meters premium models on a weekly window of their own, separate from your plan-wide weekly limit. Run out of it and Fable is gone for the rest of the week while <code>7d</code> still reads 25%.
       </p>
     </div>
 
-    <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable 5 weekly limit at 61 percent in yellow.">
+    <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable weekly limit at 61 percent in yellow.">
       <div class="term-body">
         <div class="statusline compact">
           <span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span>
@@ -1670,7 +1670,7 @@ h1.headline .accent { color: var(--accent); }
         </ol>
 
         <div class="note">
-          Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A 20-second JSON cache keeps the bar snappy on every re-render.
+          Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A transcript that has not changed is never read twice, and a first scan of a large history is spread across renders so it always finishes inside the status line timeout. Measured on 840 MB of transcripts from the last seven days: 1.2 seconds for a cached render and 3 seconds for one that picks up new turns, down from 24 and 28 seconds before v0.7.0.
         </div>
       </div>
     </div>
@@ -1713,7 +1713,7 @@ h1.headline .accent { color: var(--accent); }
 
       <div class="faq-item">
         <h3 class="faq-q">Which models does the pricing cover?</h3>
-        <p class="faq-a">Claude Fable 5 and Mythos 5 at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session mixing models still totals correctly.</p>
+        <p class="faq-a">Claude Fable and Mythos at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session mixing models still totals correctly.</p>
       </div>
 
       <div class="faq-item">
@@ -1722,7 +1722,7 @@ h1.headline .accent { color: var(--accent); }
       </div>
 
       <div class="faq-item">
-        <h3 class="faq-q">How do I see my Fable&nbsp;5 weekly limit?</h3>
+        <h3 class="faq-q">How do I see my Fable weekly limit?</h3>
         <p class="faq-a">Claude Code meters premium models on a weekly window separate from your plan-wide weekly limit, and <code>/usage</code> draws it as its own bar. It is <strong>not in the status-line hook payload</strong>, which carries the <code>five_hour</code> and <code>seven_day</code> buckets and nothing else, so no status line can read it from the hook.</p>
         <p class="faq-a">This one fetches it from the endpoint <code>/usage</code> itself uses and renders it as a <code>fable 61%</code> segment with its own reset countdown. The fetch happens in a detached process every 15 minutes, so your prompt never waits on the network. <a href="#fable">Full detail here</a>.</p>
       </div>
@@ -1730,7 +1730,7 @@ h1.headline .accent { color: var(--accent); }
       <div class="faq-item">
         <h3 class="faq-q">Does it send my data anywhere?</h3>
         <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
-        <p class="faq-a">The exception is the Fable&nbsp;5 limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
+        <p class="faq-a">The exception is the Fable limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
       </div>
     </div>
   </div>

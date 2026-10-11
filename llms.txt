@@ -14,9 +14,9 @@ License: MIT
 my-project | main | Opus 5 | 5h 82% (168.2M tok, $127, resets 47m @ 1:50pm PDT) | 7d 25% (412.6M tok, $311, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT) | session 8.2M ($6.18) | ctx 63.0k
 ```
 
-Eight segments: working directory, git branch, model, 5-hour window, 7-day window, Fable 5 weekly limit, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
+Eight segments: working directory, git branch, model, 5-hour window, 7-day window, Fable weekly limit, current session, context size. The percentage shifts green to yellow to red as headroom disappears.
 
-## The Fable 5 weekly limit
+## The Fable weekly limit
 
 Claude Code meters premium models on a weekly window separate from the plan-wide weekly limit, shown as its own bar by the `/usage` command and tracked internally as the `seven_day_overage_included` bucket.
 
@@ -27,7 +27,7 @@ Claude Code meters premium models on a weekly window separate from the plan-wide
 ## Key facts
 
 - **Platform:** Windows. PowerShell 5.1 or later. No Node, no npm, no dependencies.
-- **Network:** one request, to Anthropic's own `api.anthropic.com/api/oauth/usage`, for the Fable 5 weekly limit only — no third-party host, no telemetry, never on the render path. Everything else reads local files. `STATUSLINE_SCOPED_LIMITS=0` disables it and the script makes no outbound requests at all.
+- **Network:** one request, to Anthropic's own `api.anthropic.com/api/oauth/usage`, for the Fable weekly limit only — no third-party host, no telemetry, never on the render path. Everything else reads local files. `STATUSLINE_SCOPED_LIMITS=0` disables it and the script makes no outbound requests at all.
 - **Install:** clone the repo and run `setup.ps1`, which copies the script into `~/.claude/` and merges the `statusLine` block into `~/.claude/settings.json`.
 - **Companion:** `claude-dashboard.ps1` renders a full-screen live view with progress bars, a per-project table, a per-model breakdown and a 24-hour sparkline.
 
@@ -57,7 +57,7 @@ Cost is API-equivalent, not a bill. Subscribers on Claude Pro / Max / Team / Ent
 
 | Family | input | output | cache read | cache write 5m | cache write 1h |
 |---|---|---|---|---|---|
-| Fable 5, Mythos 5 | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
+| Fable, Mythos | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
 | Opus 5, 4.8, 4.7, 4.6, 4.5 | $5.00 | $25.00 | $0.50 | $6.25 | $10.00 |
 | Opus 4.1, 4.0, Opus 3 | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
 | Sonnet 5, 4.x | $3.00 | $15.00 | $0.30 | $3.75 | $6.00 |
