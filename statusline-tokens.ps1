@@ -157,6 +157,13 @@ function Get-HookField {
 $userProfile = [Environment]::GetFolderPath('UserProfile')
 if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $HOME }
 if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
+$claudeDir        = [System.IO.Path]::Combine($userProfile, '.claude')
+$globalConfigPath = [System.IO.Path]::Combine($userProfile, '.claude.json')
+$configDirOverride = ([string]$env:CLAUDE_CONFIG_DIR).Trim()
+if (-not [string]::IsNullOrEmpty($configDirOverride)) {
+    $claudeDir        = $configDirOverride
+    $globalConfigPath = [System.IO.Path]::Combine($configDirOverride, '.claude.json')
+}
 
 # --- per-model weekly quota (Fable) ---------------------------------------
 # Claude Code meters its premium models on their own weekly window — today
@@ -188,8 +195,8 @@ if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
 # On platforms where Claude Code keeps credentials in an OS keychain rather
 # than that file (macOS), the file is simply absent and the segment stays
 # hidden — no prompt, no keychain access, no error surfaced to the user.
-$scopedCachePath = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.cache.json')
-$scopedLockPath  = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-scoped-limits.lock')
+$scopedCachePath = [System.IO.Path]::Combine($claudeDir, 'statusline-scoped-limits.cache.json')
+$scopedLockPath  = [System.IO.Path]::Combine($claudeDir, 'statusline-scoped-limits.lock')
 
 # --- shared limit store: one set of numbers for every open window ---------
 # The percentages on this line arrive on the hook stdin, and Claude Code
@@ -237,7 +244,7 @@ $scopedLockPath  = [System.IO.Path]::Combine($userProfile, '.claude', 'statuslin
 # transcript is twenty minutes cold, not because 42 < 44 — and that same
 # rule refuses the same window's stale 50% after a roll, which the maximum
 # could not.
-$limitsStorePath = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-limits.cache.json')
+$limitsStorePath = [System.IO.Path]::Combine($claudeDir, 'statusline-limits.cache.json')
 # 2: buckets carry knownAtUtc (information age). A v1 store's values have no
 # provenance, so they are discarded rather than trusted.
 $limitsSchema    = 2
@@ -541,7 +548,7 @@ function Get-ScopedLimitsPayload([string]$CachePath, [string]$Org) {
         }
     } catch { Write-DebugLog $_ -Scope 'scoped-cache-read' }
 
-    $credPath = [System.IO.Path]::Combine($userProfile, '.claude', '.credentials.json')
+    $credPath = [System.IO.Path]::Combine($claudeDir, '.credentials.json')
     if (-not (Test-Path $credPath)) { $payload.status = 'no-credentials'; return $payload }
 
     $token = $null
@@ -1077,10 +1084,9 @@ $lastModelTurns = @{}
 #
 # [IO.Path]::Combine handles per-OS separators and works in PS 5.1
 # (whose Join-Path is two-arg only) as well as pwsh 7.
-$projectsDir       = [System.IO.Path]::Combine($userProfile, '.claude', 'projects')
-$cachePath         = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-tokens.cache.json')
-$globalConfigPath  = [System.IO.Path]::Combine($userProfile, '.claude.json')
-$accountsPath      = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-accounts.json')
+$projectsDir       = [System.IO.Path]::Combine($claudeDir, 'projects')
+$cachePath         = [System.IO.Path]::Combine($claudeDir, 'statusline-tokens.cache.json')
+$accountsPath      = [System.IO.Path]::Combine($claudeDir, 'statusline-accounts.json')
 
 # --- token totals from your other devices ----------------------------------
 # The percentages on this line are account-wide: the server counts every

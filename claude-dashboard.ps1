@@ -54,6 +54,12 @@ function Get-ModelFamily([string]$id) {
     if ($id -match 'haiku')  { return 'haiku' }
     return 'opus'
 }
+function Get-ContextLimit([string]$id) {
+    if ([string]::IsNullOrEmpty($id)) { return 0 }
+    if ($id -match 'haiku') { return 200000 }
+    if ($id -match 'fable|mythos|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6') { return 1000000 }
+    return 0
+}
 # ---------------------------------------------------------------------------
 # Loop watch thresholds (#41). Override with
 #   STATUSLINE_LOOP_WATCH=window,maxDistinct,tokenFloor
@@ -299,10 +305,16 @@ if ([string]::IsNullOrEmpty($userProfile)) { $userProfile = $env:USERPROFILE }
 # [IO.Path]::Combine handles per-OS separators and accepts any number of
 # parts, so the same call works on PS 5.1 (whose Join-Path is two-arg only)
 # and on pwsh 7+.
-$projectsDir      = [System.IO.Path]::Combine($userProfile, '.claude', 'projects')
+$claudeDir        = [System.IO.Path]::Combine($userProfile, '.claude')
 $globalConfigPath = [System.IO.Path]::Combine($userProfile, '.claude.json')
-$accountsPath     = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-accounts.json')
-$statuslineCache  = [System.IO.Path]::Combine($userProfile, '.claude', 'statusline-tokens.cache.json')
+$configDirOverride = ([string]$env:CLAUDE_CONFIG_DIR).Trim()
+if (-not [string]::IsNullOrEmpty($configDirOverride)) {
+    $claudeDir        = $configDirOverride
+    $globalConfigPath = [System.IO.Path]::Combine($configDirOverride, '.claude.json')
+}
+$projectsDir      = [System.IO.Path]::Combine($claudeDir, 'projects')
+$accountsPath     = [System.IO.Path]::Combine($claudeDir, 'statusline-accounts.json')
+$statuslineCache  = [System.IO.Path]::Combine($claudeDir, 'statusline-tokens.cache.json')
 
 # The statusline persists the most recent rate_limits.{five_hour,seven_day}
 # percentages it sees from the hook stdin. We read them here so the dashboard
@@ -431,6 +443,7 @@ function Invoke-Scan {
     $sessionsCounted = 0
     $latestContext = [long]0
     $latestContextTime = [DateTime]::MinValue
+    $modelForContext = ''
     $totalTurns = 0
     $seen = @{}
     # Loop watch (#41): message id -> the tool calls that turn issued, and
@@ -465,7 +478,6 @@ function Invoke-Scan {
         # parent folder name in .claude/projects has all separators replaced
         # with dashes, which loses information.
         $projLabel = $f.Directory.Name
-        $modelForContext = ''
 
         $reader = $null
         try {
@@ -935,13 +947,12 @@ function Build-Frame {
     [void]$lines.Add((Color $fgSess "CURRENT SESSION") + '    ' + (Color $fgDim $sessText.PadRight(30)) +
         ("{0} tok   {1}" -f (Fmt-Tokens $Scan.tokSession), (Fmt-Cost $Scan.costSession)))
 
-    # Context tokens — assume a 200k window unless the latest turn used Opus
-    # 4.7 1M, which we don't reliably distinguish from its 200k sibling here.
-    $ctxLimit = 200000
-    $ctxPct = 0.0
-    if ($ctxLimit -gt 0) { $ctxPct = [math]::Min(100, ($Scan.ctxTokens / [double]$ctxLimit) * 100) }
-    [void]$lines.Add((Color $fgCtx "CONTEXT        ") + '    ' +
-        (Color $fgDim ("{0} / 200k  ({1:0}%)" -f (Fmt-Tokens $Scan.ctxTokens), $ctxPct)))
+    $ctxLimit = Get-ContextLimit $Scan.ctxModel
+    $ctxText = Fmt-Tokens $Scan.ctxTokens
+    if ($ctxLimit -gt 0 -and $Scan.ctxTokens -le $ctxLimit) {
+        $ctxText = "{0} / {1}  ({2:0}%)" -f $ctxText, (Fmt-Tokens $ctxLimit), (($Scan.ctxTokens / [double]$ctxLimit) * 100)
+    }
+    [void]$lines.Add((Color $fgCtx "CONTEXT        ") + '    ' + (Color $fgDim $ctxText))
 
     # Loop watch (#41) ------------------------------------------------------
     # Three states, and the quiet one is stated explicitly rather than omitted:

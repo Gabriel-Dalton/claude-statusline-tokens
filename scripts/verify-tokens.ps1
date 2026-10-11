@@ -56,7 +56,9 @@ if ($Today) {
     $label = ('LAST {0} HOURS' -f $Hours)
 }
 
-$projectsDir = Join-Path $env:USERPROFILE '.claude\projects'
+$claudeDir = Join-Path $env:USERPROFILE '.claude'
+if (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) { $claudeDir = $env:CLAUDE_CONFIG_DIR.Trim() }
+$projectsDir = Join-Path $claudeDir 'projects'
 if (-not (Test-Path $projectsDir)) {
     Write-Error "No transcripts found at $projectsDir. Has Claude Code run on this machine?"
     exit 1
@@ -174,7 +176,7 @@ foreach ($kv in ($models.GetEnumerator() | Sort-Object -Property Value -Descendi
 }
 
 # Compare against whatever the status line last wrote, when the windows align.
-$cachePath = Join-Path $env:USERPROFILE '.claude\statusline-tokens.cache.json'
+$cachePath = Join-Path $claudeDir 'statusline-tokens.cache.json'
 if ((-not $Today) -and $Hours -eq 5 -and (Test-Path $cachePath)) {
     try {
         $c = [System.IO.File]::ReadAllText($cachePath) | ConvertFrom-Json

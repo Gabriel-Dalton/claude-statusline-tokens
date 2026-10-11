@@ -105,6 +105,12 @@ This is a deliberate trade-off. The alternative — attributing pre-install hist
 
 If you've actively been switching accounts before installing, the per-account 5h/7d totals during your first 7 days post-install may include some other-account work. Once each historical window scrolls past 7 days old, it self-corrects: from then on every checkpoint is real and attribution is exact.
 
+## Accounts in separate config folders
+
+Some account switchers start a session with `CLAUDE_CONFIG_DIR` pointing at a folder of its own and leave the main login untouched. In that window the status line reads everything from that folder: `.credentials.json`, `.claude.json`, `projects/` and its own cache files. The main login keeps using `~/.claude`.
+
+Each folder has its own stores, so two accounts open side by side each show their own percentages, reset times and totals.
+
 ## Edge cases
 
 **Brand-new install with no `~/.claude.json`:** `currentAccount` is `null`, no checkpoints are written, and the per-account filter degrades gracefully to "every turn counts as current." Status line looks exactly like the pre-v0.2 single-account version. As soon as `~/.claude.json` appears, the first checkpoint is written on the next render.
