@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-11
+
 ### Added
 
 - **Token totals can include your other devices.** The percentage on each window is account-wide, but the token and cost totals beside it were summed from `~/.claude/projects`, which only records what ran on the machine drawing the line. A second computer on the same account would show `7d 97% (500.0k tok)`: a correct percentage next to a total covering a fraction of the usage behind it.
@@ -23,6 +25,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **The dashboard's context line no longer assumes a 200k window.** It read `204.3k / 200k (100%)` on a model with a 1M window. The window size now comes from the model of the latest turn, and when the model is not recognised, or the count is larger than the window, the percentage is left off. The model used for that line was also being cleared for every transcript scanned, so it was usually empty. Closes #42.
 
 - **`tests/test-configdir.ps1`**, 9 assertions: a main login and a second profile side by side, each reading and writing only its own files.
+
+### Changed
+
+- **The page has a skip link, a `main` landmark and anchor offsets.** Keyboard users can jump past the navigation, and a section opened from the nav no longer lands under the sticky bar.
+
+- **New FAQ entry** on using more than one account or more than one computer.
+
+- **The README's em dashes are rewritten.** 85 down to 5; the ones left are table placeholders and one reference to the character itself. Closes #49.
 
 ## [0.7.0] - 2026-10-11
 
