@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Token totals can include your other devices.** The percentage on each window is account-wide, but the token and cost totals beside it were summed from `~/.claude/projects`, which only records what ran on the machine drawing the line. A second computer on the same account would show `7d 97% (500.0k tok)`: a correct percentage next to a total covering a fraction of the usage behind it.
+
+  The server exposes no token counts to reconcile against, so the fix is opt-in and local: set `STATUSLINE_DEVICES_DIR` to a folder every machine can see (OneDrive, Dropbox, Syncthing, a share). Each device writes `statusline-device-<id>.json` there, seven days of its own turns in five-minute buckets, and adds every other device's buckets to its `5h` and `7d` totals. Buckets hold a time, a token count and a cost, and are filed under a hash of the organization id, so nothing identifying leaves the machine and a second account on the same folder is not mixed in. `STATUSLINE_DEVICE_ID` overrides the default file name (the computer name).
+
+  Unset, behavior is unchanged and nothing is written outside `~/.claude`. `session` stays local either way, and `claude-dashboard.ps1` does not read the shared folder yet.
+
+- **`tests/test-devices.ps1`**, 21 assertions: two isolated profiles standing in for two machines, checking that each publishes without counting itself twice, that both converge on the same totals per window, and that another account's buckets, out-of-window or future buckets, a half-synced peer file and a missing folder all degrade to the local total.
+
 ## [0.7.0] - 2026-10-11
 
 ### Added
@@ -19,14 +29,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `STATUSLINE_TZ_LABEL=0` (or `off` / `false` / `no`) restores the bare clock time.
 
 - **`tests/test-tz.ps1`**, 35 assertions: every mapped zone in both a summer and a winter instant (including the southern hemisphere, where those invert), the offset fallback at whole, negative and `:45` offsets, an `Unspecified`-Kind stamp that must not be read as local, and the suffix as it reaches the rendered line with the flag on and off.
-
-- **Token totals can include your other devices.** The percentage on each window is account-wide, but the token and cost totals beside it were summed from `~/.claude/projects`, which only records what ran on the machine drawing the line. A second computer on the same account would show `7d 97% (500.0k tok)`: a correct percentage next to a total covering a fraction of the usage behind it.
-
-  The server exposes no token counts to reconcile against, so the fix is opt-in and local: set `STATUSLINE_DEVICES_DIR` to a folder every machine can see (OneDrive, Dropbox, Syncthing, a share). Each device writes `statusline-device-<id>.json` there, seven days of its own turns in five-minute buckets, and adds every other device's buckets to its `5h` and `7d` totals. Buckets hold a time, a token count and a cost, and are filed under a hash of the organization id, so nothing identifying leaves the machine and a second account on the same folder is not mixed in. `STATUSLINE_DEVICE_ID` overrides the default file name (the computer name).
-
-  Unset, behavior is unchanged and nothing is written outside `~/.claude`. `session` stays local either way, and `claude-dashboard.ps1` does not read the shared folder yet.
-
-- **`tests/test-devices.ps1`**, 21 assertions: two isolated profiles standing in for two machines, checking that each publishes without counting itself twice, that both converge on the same totals per window, and that another account's buckets, out-of-window or future buckets, a half-synced peer file and a missing folder all degrade to the local total.
 
 ### Fixed
 
