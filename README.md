@@ -41,6 +41,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **20-second on-disk result cache** keyed by current account so switches auto-invalidate
 - **Zero dependencies** beyond PowerShell 5.1 (ships with Windows 10/11) and `git` (for the branch name)
 - **No telemetry, no third parties.** Every segment but one reads only your local `~/.claude` directory. The exception is the Fable limit, which is not in any local file — that polls Anthropic's own usage endpoint every 15 minutes, off the render path, and switches off with `STATUSLINE_SCOPED_LIMITS=0`
+- **Totals across devices, if you want them.** Token and cost totals come from local transcripts, so by default they cover this machine only while the percentage covers the whole account. Set `STATUSLINE_DEVICES_DIR` to a synced folder and each device adds the others' usage to its own. See [Totals across your devices](#totals-across-your-devices)
 - **Loop watch** in the dashboard — flags an agent stuck repeating the same tool calls while burning tokens, using repetition rather than cost-anomaly detection. See [Loop watch](#loop-watch)
 - **Live dashboard companion** — `claude-dashboard.ps1` opens a full-screen, re-rendering view of the same numbers plus a per-project table, opus/sonnet/haiku split, and a 24-hour activity sparkline. See [Dashboard](#dashboard) below.
 
@@ -468,6 +469,35 @@ being mid-burst is not a reason to keep knocking on an endpoint that just
 refused you.
 
 With `STATUSLINE_SCOPED_LIMITS=0` the script makes no network calls at all, which is where it stood before this feature.
+
+### Totals across your devices
+
+The percentages are account-wide: Anthropic counts every device signed into the account. The token and cost totals next to them are summed from the transcripts in `~/.claude/projects`, and those only record what ran on **this machine**. Do a week of work on a desktop, open a laptop, and the laptop reads `7d 97% (500.0k tok, ...)`. The percentage is right. The total is the laptop's share of it.
+
+The server does not expose token counts (the usage endpoint returns percentages and reset times, nothing else), so the devices have to tell each other. Point every machine at a folder they can all see:
+
+```powershell
+# a folder your sync client already mirrors: OneDrive, Dropbox, Syncthing, a network share
+[Environment]::SetEnvironmentVariable('STATUSLINE_DEVICES_DIR', "$env:OneDrive\claude-statusline", 'User')
+```
+
+Create the folder, set the variable on each machine, restart Claude Code. From then on each device:
+
+- writes `statusline-device-<name>.json` there: its own turns from the last seven days, rolled into five-minute buckets
+- adds every other device's buckets to its `5h` and `7d` totals
+
+| Variable | Effect |
+|---|---|
+| `STATUSLINE_DEVICES_DIR=<folder>` | Turns the feature on. Unset, or pointing at a folder that does not exist, the totals stay local and nothing is written outside `~/.claude` |
+| `STATUSLINE_DEVICE_ID=<name>` | Names this machine's file. Defaults to the computer name; set it if two of your machines share one |
+
+What to expect:
+
+- **A bucket is a time, a token count and a cost.** No prompts, paths, message ids or account ids leave the machine. Buckets are filed under a hash of the organization id, so a second account's usage on the same folder is never mixed into yours.
+- **It is as fresh as your sync client.** A device rewrites its file at most once a minute, and the other side sees it when the folder syncs. The percentage will usually move first.
+- **The window edge is approximate.** A peer's bucket counts whole if any part of it falls inside the window, so a total can include up to five minutes that the percentage does not.
+- **`session` stays local.** It describes the burst of work at this keyboard.
+- **The dashboard still shows this machine only.** `claude-dashboard.ps1` runs its own scan and does not read the shared folder yet.
 
 ## Pricing at a glance
 
