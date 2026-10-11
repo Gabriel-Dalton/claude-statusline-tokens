@@ -55,7 +55,8 @@ $suites = @(
     @{ file = 'test-reset.ps1';     what = 'token windows aligned to the quota, not the clock' },
     @{ file = 'test-authority.ps1'; what = 'information age decides, so a bucket can be corrected' },
     @{ file = 'test-tz.ps1';        what = 'reset times name their zone, per instant, not per today' },
-    @{ file = 'test-devices.ps1';   what = 'token totals include your other devices, when asked to' }
+    @{ file = 'test-devices.ps1';   what = 'token totals include your other devices, when asked to' },
+    @{ file = 'test-scale.ps1';     what = 'a render stays cheap on a large profile' }
 )
 
 Write-Host "testing $ScriptPath`n"

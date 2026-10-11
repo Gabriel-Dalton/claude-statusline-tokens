@@ -342,7 +342,12 @@ function Merge-LimitObservation($Store, [string]$Key, [string]$Name, $Percent, $
     if ($old.resetsAtUtc -and $ResetsUtc) {
         $delta = ($ResetsUtc - $old.resetsAtUtc).TotalSeconds
         if ($delta -gt $script:limitsWindowTolSec)  { $Store[$Key] = $incoming; return }
-        if ($delta -lt -$script:limitsWindowTolSec) { return }
+        if ($delta -lt -$script:limitsWindowTolSec) {
+            $oldKnownAt = [DateTime]::MinValue
+            if ($old.knownAtUtc) { $oldKnownAt = [DateTime]$old.knownAtUtc }
+            if ($ResetsUtc -gt $ObservedUtc -and $known -gt $oldKnownAt) { $Store[$Key] = $incoming }
+            return
+        }
     }
 
     # Within one window, the observer who learned its figure most recently
@@ -1404,6 +1409,8 @@ $cacheTtlSec = 20
 # a single full rescan on upgrade.
 $cacheSchemaVersion = 3   # bump when on-disk shape changes; older caches discarded
 $useCache = $false
+$scanBudgetMs = 5000
+$scanIncomplete = $false
 $currentOrgKey = ''
 if ($currentAccount) { $currentOrgKey = $currentAccount.org }
 # Per-transcript tail cache (M1-04): keyed by absolute path, each entry
@@ -1441,6 +1448,8 @@ function Get-LaterStamp($a, $b) {
     if (([DateTime]$a) -ge ([DateTime]$b)) { return [DateTime]$a }
     return [DateTime]$b
 }
+$live5hUtc = Get-LaterStamp $reset5hUtc $storeReset5hUtc
+$live7dUtc = Get-LaterStamp $reset7dUtc $storeReset7dUtc
 
 if (Test-Path $cachePath) {
     try {
@@ -1468,18 +1477,20 @@ if (Test-Path $cachePath) {
         # full cache TTL after the percentage has already dropped to zero.
         $sameWindow = $true
         foreach ($w in @(
-            @{ live = (Get-LaterStamp $reset5hUtc $storeReset5hUtc); field = 'resets5h' },
-            @{ live = (Get-LaterStamp $reset7dUtc $storeReset7dUtc); field = 'resets7d' }
+            @{ live = $live5hUtc; field = 'window5h'; legacy = 'resets5h' },
+            @{ live = $live7dUtc; field = 'window7d'; legacy = 'resets7d' }
         )) {
             if ($cachedOrg -ne $currentOrgKey -or $null -eq $w.live) { continue }
-            if ($cache.PSObject.Properties.Match($w.field).Count -eq 0) { continue }
-            $cachedReset = ConvertTo-ResetUtc $cache.($w.field)
+            $field = $w.field
+            if ($cache.PSObject.Properties.Match($field).Count -eq 0) { $field = $w.legacy }
+            if ($cache.PSObject.Properties.Match($field).Count -eq 0) { continue }
+            $cachedReset = ConvertTo-ResetUtc $cache.$field
             if ($null -eq $cachedReset) { continue }
             if ([Math]::Abs((([DateTime]$w.live) - $cachedReset).TotalSeconds) -gt $limitsWindowTolSec) {
                 $sameWindow = $false
             }
         }
-        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion -and $sameWindow) {
+        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion -and $sameWindow -and -not $cache.scanIncomplete) {
             $tok5h       = [long]$cache.tok5h
             $tok7d       = [long]$cache.tok7d
             $cost5h      = [double]$cache.cost5h
@@ -1714,6 +1725,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
     # end of this block. Built from $transcriptCache, mutated in-place
     # as we scan / resume each file.
     $transcriptStateOut = @{}
+    $scanWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $files = Get-ChildItem -Path $projectsDir -Filter *.jsonl -Recurse `
         -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -gt $scanFloor }
@@ -1769,39 +1781,44 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             $lastUsageLineThisFile = [string]$cached.lastUsageLine
         }
         $newTurnsForCache = New-Object System.Collections.ArrayList
-        try {
-            $stream = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-            if ($resumeOffset -gt 0 -and $resumeOffset -lt $stream.Length) {
-                [void]$stream.Seek($resumeOffset, [System.IO.SeekOrigin]::Begin)
+        $overBudget = $scanWatch.ElapsedMilliseconds -gt $scanBudgetMs
+        if ($overBudget -and $resumeOffset -lt $currentLen) { $scanIncomplete = $true }
+        if (-not $overBudget) {
+            try {
+                $stream = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                if ($resumeOffset -gt 0 -and $resumeOffset -le $stream.Length) {
+                    [void]$stream.Seek($resumeOffset, [System.IO.SeekOrigin]::Begin)
+                }
+                # BOM detection disabled: when resumeOffset > 0 we've seeked
+                # past the start, so any "BOM-shaped" bytes there would just
+                # be random JSON content. Claude Code's transcripts are
+                # plain UTF-8 without a BOM anyway.
+                $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $false, 4096, $false)
+                while (-not $reader.EndOfStream) {
+                    $line = $reader.ReadLine()
+                    if (-not $line) { continue }
+                    $turn = Parse-UsageLine $line $scanFloor
+                    if (-not $turn) { continue }
+                    # Track the latest assistant usage line in this file so
+                    # the per-file cache can record it (used by context-token
+                    # readouts and future consumers).
+                    $lastUsageLineThisFile = $line
+                    $isRepeat = $turn.msgId -and $seen.ContainsKey($turn.msgId)
+                    Apply-Turn $turn
+                    if (-not $isRepeat) { [void]$newTurnsForCache.Add($turn) }
+                }
+                # Position after the read is the resume point for the next
+                # render. BaseStream.Position is the byte offset; even though
+                # StreamReader buffers, .Position reflects the stream's actual
+                # read head, which is what we want.
+                $endOffset = $reader.BaseStream.Position
+                $reader.Close()
+                $stream = $null
+            } catch {
+                Write-DebugLog $_ -Scope 'transcript-scan'
+                if ($reader) { try { $reader.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
+                if ($stream) { try { $stream.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
             }
-            # BOM detection disabled: when resumeOffset > 0 we've seeked
-            # past the start, so any "BOM-shaped" bytes there would just
-            # be random JSON content. Claude Code's transcripts are
-            # plain UTF-8 without a BOM anyway.
-            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $false, 4096, $false)
-            while (-not $reader.EndOfStream) {
-                $line = $reader.ReadLine()
-                if (-not $line) { continue }
-                $turn = Parse-UsageLine $line $scanFloor
-                if (-not $turn) { continue }
-                # Track the latest assistant usage line in this file so
-                # the per-file cache can record it (used by context-token
-                # readouts and future consumers).
-                $lastUsageLineThisFile = $line
-                Apply-Turn $turn
-                [void]$newTurnsForCache.Add($turn)
-            }
-            # Position after the read is the resume point for the next
-            # render. BaseStream.Position is the byte offset; even though
-            # StreamReader buffers, .Position reflects the stream's actual
-            # read head, which is what we want.
-            $endOffset = $reader.BaseStream.Position
-            $reader.Close()
-            $stream = $null
-        } catch {
-            Write-DebugLog $_ -Scope 'transcript-scan'
-            if ($reader) { try { $reader.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
-            if ($stream) { try { $stream.Close() } catch { Write-DebugLog $_ -Scope 'transcript-reader-close' } }
         }
 
         # Combine kept (cache) + new turns for the next run's cache entry.
@@ -1826,7 +1843,7 @@ if ($devicesEnabled -and -not $useCache) {
     # Published only when this render actually scanned. Without a projects
     # directory there is nothing to report, and an empty file would erase
     # whatever this device had told the others.
-    if ($null -ne $turns) { Write-DeviceFile $devicesDir $deviceId $deviceBuckets }
+    if ($null -ne $turns -and -not $scanIncomplete) { Write-DeviceFile $devicesDir $deviceId $deviceBuckets }
     $peers = Read-PeerDevices $devicesDir $deviceId (Get-OrgTag $currentOrgKey) $nowUtc $cut5h $cut7d
     $tok5h  += $peers.tok5h;  $cost5h += $peers.cost5h
     $tok7d  += $peers.tok7d;  $cost7d += $peers.cost7d
@@ -1893,7 +1910,7 @@ $pct7d = $hookFields.pct7d
 try {
     $payload = @{
         schemaVersion = $cacheSchemaVersion
-        computedAtUtc = $nowUtc.ToString('o')
+        computedAtUtc = $(if ($useCache -and $computedAt) { ([DateTime]$computedAt).ToString('o') } else { $nowUtc.ToString('o') })
         orgKey        = $currentOrgKey
         tok5h         = $tok5h
         tok7d         = $tok7d
@@ -1916,6 +1933,9 @@ try {
     # keeps the reader (and claude-dashboard.ps1) from having to guess.
     if ($null -ne $reset5hUtc) { $payload.resets5h = $reset5hUtc.ToString('o') }
     if ($null -ne $reset7dUtc) { $payload.resets7d = $reset7dUtc.ToString('o') }
+    if ($scanIncomplete) { $payload.scanIncomplete = $true }
+    if ($null -ne $live5hUtc) { $payload.window5h = ([DateTime]$live5hUtc).ToString('o') }
+    if ($null -ne $live7dUtc) { $payload.window7d = ([DateTime]$live7dUtc).ToString('o') }
     # Ticks are the scan's working form; ISO-8601 is the on-disk form, so
     # the file stays legible to claude-dashboard.ps1 and to anything else
     # that opens it.

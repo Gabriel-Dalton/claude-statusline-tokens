@@ -2,7 +2,7 @@
 
 # claude-statusline-tokens
 
-**A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows, your Fable 5 weekly limit, AND your current work session, with multi-account awareness.**
+**A Claude Code status line for Windows that shows real numbers — percentage used, token count, dollar cost, and time until reset — for your 5-hour and 7-day rate-limit windows, your Fable weekly limit, AND your current work session, with multi-account awareness.**
 
 ```
 my-project | main | Opus 5 | 5h 42% (1.2M tok, $4.50, resets 2h14m @ 12:38pm PDT) | 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT) | session 850k ($3.40) | ctx 23k (2%)
@@ -29,7 +29,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 
 - **Color-coded headroom** — the 5h and 7d percentages tint **green** (< 50%), **yellow** (50–79%), **red** (≥ 80%) so a glance tells you where you stand. Tweak the bands with `STATUSLINE_PCT_THRESHOLDS=warn,crit` (e.g. `STATUSLINE_PCT_THRESHOLDS=65,85`)
 - **Percentage + tokens + $ in one line** for both the 5h block and the 7d weekly limit
-- **Fable 5 weekly limit** — the separate weekly quota Claude Code meters premium models on, which it tracks internally but **does not send to the status line hook**. This is the only status line that shows it. See [Fable 5 weekly limit](#fable-5-weekly-limit)
+- **Fable weekly limit** — the separate weekly quota Claude Code meters premium models on, which it tracks internally but **does not send to the status line hook**. This is the only status line that shows it. See [Fable weekly limit](#fable-5-weekly-limit)
 - **Reset countdown** on both windows — `resets 2h14m @ 12:38pm PDT` — so you know whether to push on or take a break. The zone is resolved for the instant being printed, so a reset on the far side of a DST cutover reads correctly; drop the suffix with `STATUSLINE_TZ_LABEL=0`. Immune to DST, and it survives renders where Claude Code omits the field
 - **Context fill %** from `context_window.used_percentage` — a raw `ctx 63.0k` reads like a third of a 200k window but is 6% of a 1M one, so the percentage is the only signal that means the same thing on every model
 - **Verify the numbers yourself** with [`scripts/verify-tokens.ps1`](scripts/verify-tokens.ps1) — an independent re-derivation that cross-checks the status line's own arithmetic
@@ -40,7 +40,7 @@ A 20-second on-disk cache keeps the render snappy without burning CPU on every k
 - **Regex-based scan** of `.jsonl` transcripts — ~10× faster than `ConvertFrom-Json` per line on a 20MB+ pile
 - **20-second on-disk result cache** keyed by current account so switches auto-invalidate
 - **Zero dependencies** beyond PowerShell 5.1 (ships with Windows 10/11) and `git` (for the branch name)
-- **No telemetry, no third parties.** Every segment but one reads only your local `~/.claude` directory. The exception is the Fable 5 limit, which is not in any local file — that polls Anthropic's own usage endpoint every 15 minutes, off the render path, and switches off with `STATUSLINE_SCOPED_LIMITS=0`
+- **No telemetry, no third parties.** Every segment but one reads only your local `~/.claude` directory. The exception is the Fable limit, which is not in any local file — that polls Anthropic's own usage endpoint every 15 minutes, off the render path, and switches off with `STATUSLINE_SCOPED_LIMITS=0`
 - **Totals across devices, if you want them.** Token and cost totals come from local transcripts, so by default they cover this machine only while the percentage covers the whole account. Set `STATUSLINE_DEVICES_DIR` to a synced folder and each device adds the others' usage to its own. See [Totals across your devices](#totals-across-your-devices)
 - **Loop watch** in the dashboard — flags an agent stuck repeating the same tool calls while burning tokens, using repetition rather than cost-anomaly detection. See [Loop watch](#loop-watch)
 - **Live dashboard companion** — `claude-dashboard.ps1` opens a full-screen, re-rendering view of the same numbers plus a per-project table, opus/sonnet/haiku split, and a 24-hour activity sparkline. See [Dashboard](#dashboard) below.
@@ -133,7 +133,7 @@ max output, which fixes its worst case:
 |---|---|
 | Sonnet 5 | $7.92 |
 | Opus 5 / 4.8 / 4.7 | $13.20 |
-| Fable 5 / Mythos 5 | $26.40 |
+| Fable / Mythos | $26.40 |
 | Opus 4.1 (legacy) | $39.60 |
 
 Against a heavy 5-hour window of ~$187, the worst an Opus 5 turn can do is
@@ -423,9 +423,9 @@ Four details worth knowing:
 
 > The `5h` and `7d` numbers are scoped to your **current Claude account**, so they always match the percentage Claude Code itself is showing you. The `session` number tracks your **current burst of work** independent of which account is signed in — so a mid-day account switch (or the clock crossing midnight in the middle of a coding session) doesn't fragment it. Read [`docs/SESSION.md`](docs/SESSION.md) and [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md) for the full models.
 
-### Fable 5 weekly limit
+### Fable weekly limit
 
-Claude Code meters its premium models on a **separate weekly window** from your plan-wide weekly limit. Run `/usage` and you'll see it as its own bar; internally Claude Code calls that bucket `seven_day_overage_included` and labels it "Fable 5 limit". Burn through it and Fable stops being available for the rest of the week while your ordinary weekly limit still has room — which is exactly the situation you want warning of in advance.
+Claude Code meters its premium models on a **separate weekly window** from your plan-wide weekly limit. Run `/usage` and you'll see it as its own bar; internally Claude Code calls that bucket `seven_day_overage_included` and labels it "Fable limit". Burn through it and Fable stops being available for the rest of the week while your ordinary weekly limit still has room — which is exactly the situation you want warning of in advance.
 
 ```
 7d 17% (4.8M tok, $18.20, resets 4d6h @ Sun 6am PDT) | fable 61% (resets 4d6h @ Sun 6am PDT)
@@ -505,7 +505,7 @@ Pricing uses Anthropic's published per-million-token rates, embedded in the scri
 
 | Family | input | output | cache read | cache write 5m | cache write 1h |
 |---|---|---|---|---|---|
-| Fable 5 / Mythos 5 | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
+| Fable / Mythos | $10.00 | $50.00 | $1.00 | $12.50 | $20.00 |
 | Opus 5 / 4.8 / 4.7 / 4.6 / 4.5 |  $5.00 | $25.00 | $0.50 |  $6.25 | $10.00 |
 | Opus 4.1 / 4.0 / Opus 3 | $15.00 | $75.00 | $1.50 | $18.75 | $30.00 |
 | Sonnet 5 / 4.x |  $3.00 | $15.00 | $0.30 |  $3.75 |  $6.00 |
