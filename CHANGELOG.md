@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-11
+
 ### Added
 
 - **Reset times name their time zone.** `resets 2h14m @ 12:38pm` gave a wall-clock time with nothing to read it against — fine on the machine that drew it, ambiguous the moment the line is pasted into an issue, a chat, or a screenshot. It now reads `resets 2h14m @ 12:38pm PDT`.
