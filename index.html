@@ -133,6 +133,14 @@
         },
         {
           "@type": "Question",
+          "name": "Does it work with more than one account or more than one computer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes to both. A session started in its own config folder (CLAUDE_CONFIG_DIR, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers. Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with STATUSLINE_DEVICES_DIR and they add each other's totals. Only times, token counts and costs are written there."
+          }
+        },
+        {
+          "@type": "Question",
           "name": "Does it send my data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
@@ -179,6 +187,14 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+section[id] { scroll-margin-top: 76px; }
+.skip-link {
+  position: absolute; left: 12px; top: -48px; z-index: 100;
+  background: var(--fg); color: var(--bg);
+  padding: 8px 14px; border-radius: 6px;
+  font-size: 14px; font-weight: 600; text-decoration: none;
+}
+.skip-link:focus { top: 12px; }
 
 body {
   background: var(--bg);
@@ -1170,6 +1186,7 @@ h1.headline .accent { color: var(--accent); }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <!-- ─────────────────────────────────────────── NAV -->
 <nav class="nav" aria-label="primary">
@@ -1177,7 +1194,7 @@ h1.headline .accent { color: var(--accent); }
     <a class="brand" href="./">
       <span class="mark">›</span>
       <span class="name">statusline-tokens</span>
-      <span class="tag">v0.7.0</span>
+      <span class="tag">v0.8.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -1196,6 +1213,7 @@ h1.headline .accent { color: var(--accent); }
 </nav>
 
 <!-- ─────────────────────────────────────────── HERO -->
+<main id="main">
 <header class="hero">
   <div class="shell">
     <span class="eyebrow">Claude Code · Windows · PowerShell</span>
@@ -1728,6 +1746,12 @@ h1.headline .accent { color: var(--accent); }
       </div>
 
       <div class="faq-item">
+        <h3 class="faq-q">Does it work with more than one account or more than one computer?</h3>
+        <p class="faq-a">Yes to both. A session started in its own config folder (<code>CLAUDE_CONFIG_DIR</code>, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers.</p>
+        <p class="faq-a">Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with <code>STATUSLINE_DEVICES_DIR</code> and they add each other's totals. Only times, token counts and costs are written there.</p>
+      </div>
+
+      <div class="faq-item">
         <h3 class="faq-q">Does it send my data anywhere?</h3>
         <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
         <p class="faq-a">The exception is the Fable limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed.</p>
@@ -1750,6 +1774,8 @@ h1.headline .accent { color: var(--accent); }
     </div>
   </div>
 </section>
+
+</main>
 
 <!-- ─────────────────────────────────────────── FOOTER -->
 <footer class="foot">
