@@ -16,6 +16,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **`tests/test-devices.ps1`**, 21 assertions: two isolated profiles standing in for two machines, checking that each publishes without counting itself twice, that both converge on the same totals per window, and that another account's buckets, out-of-window or future buckets, a half-synced peer file and a missing folder all degrade to the local total.
 
+### Fixed
+
+- **A session under `CLAUDE_CONFIG_DIR` shows its own account.** Every path was built from the home folder, so a window running a second account in its own config folder showed the main login's percentages and reset times, and its usage request was made with the main login's token. Credentials, account identity, transcripts and all three cache files are now read from `CLAUDE_CONFIG_DIR` when it is set. Each profile keeps its own stores, so two accounts on one machine no longer overwrite each other. Same change in `claude-dashboard.ps1` and `scripts/verify-tokens.ps1`. Closes #55.
+
+- **The dashboard's context line no longer assumes a 200k window.** It read `204.3k / 200k (100%)` on a model with a 1M window. The window size now comes from the model of the latest turn, and when the model is not recognised, or the count is larger than the window, the percentage is left off. The model used for that line was also being cleared for every transcript scanned, so it was usually empty. Closes #42.
+
+- **`tests/test-configdir.ps1`**, 9 assertions: a main login and a second profile side by side, each reading and writing only its own files.
+
 ## [0.7.0] - 2026-10-11
 
 ### Added
