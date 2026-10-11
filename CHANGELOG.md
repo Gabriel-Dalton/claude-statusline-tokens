@@ -20,6 +20,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- **A render no longer re-reads transcripts that have not changed.** The resume check skipped the seek when a file was exactly as long as it was at the last scan, so every unchanged transcript was read from the start again and its turns were appended to the cache a second time. On a profile with 840 MB of transcripts from the last seven days, a warm render took 24 seconds and the cache grew by about 3 MB per render. It now takes 1 to 3 seconds and the cache holds steady.
+
+- **The cache is checked against the window the totals were summed for.** Totals are summed against the later of the hook's reset stamp and the shared store's, but the cache recorded only the hook's. When the two differed, no scan could produce a cache the next render accepted, so every render scanned.
+
+- **A cache hit no longer pushes the scan time forward.** Each render rewrote `computedAtUtc`, so with a window rendering more often than the 20 second lifetime the totals were never recomputed.
+
+- **A wrong stored reset can be corrected.** The shared store kept whichever reset stamp was later, so one wrong stamp held a bucket until that moment passed. A window that is still open, reported by a better informed observer, now replaces it. A window that has rolled still loses.
+
+- **A first scan of a large profile is spread over several renders.** Reading new transcript bytes stops after 5 seconds and resumes on the next render, so a render stays inside the status line timeout however much history there is. Totals climb to their full value over the first few renders.
+
+- **Turns logged once per content block are cached once.** Repeats were already left out of the totals but were still written to the cache.
+
+- **`tests/test-scale.ps1`**, 9 assertions covering the above.
+
 - **Token counts roll over to `B` past a billion.** `Fmt-Tokens` topped out at `M`, so a 7-day window on a heavy plan drew `1354.0M tok` — seven characters of the widest segment on the line, spent saying something `1.35B` says in five. `B` carries two decimals: one would round a 60M-token swing away.
 
   The thresholds are `999,950` and `999,950,000` rather than the round numbers, because each tier rounds before it prints. `999,999,999` is under a billion but formats as `1000.0M` at one decimal, so the tier above has to take over slightly early or the boundary shows a count in units it has already outgrown. Same fix in `claude-dashboard.ps1` and `scripts/verify-tokens.ps1`.
