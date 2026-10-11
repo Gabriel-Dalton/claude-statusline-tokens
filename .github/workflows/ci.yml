@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the test suites
+        shell: powershell
+        run: |
+          $script = (Resolve-Path .\statusline-tokens.ps1).Path
+          .\tests\run-all.ps1 -ScriptPath $script
+          exit $LASTEXITCODE
