@@ -15,9 +15,6 @@
 <meta property="og:url" content="https://claude-statusline-tokens.vercel.app/">
 <meta property="og:title" content="Claude Code status line with token counts and cost">
 <meta property="og:description" content="Token totals, API-rate cost and reset countdowns on the 5h + 7d limits. One PowerShell file, no dependencies.">
-<!-- Absolute URL is mandatory: crawlers do not resolve relative og:image paths,
-     so the previous "./docs/img/..." value produced no preview at all. 1200x630
-     is the ratio Twitter/LinkedIn/Slack crop to. -->
 <meta property="og:image" content="https://claude-statusline-tokens.vercel.app/docs/img/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -30,15 +27,7 @@
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="%230a0a0a"/><text x="16" y="22" font-family="ui-monospace,monospace" font-size="20" font-weight="600" fill="%23f59e0b" text-anchor="middle">›</text></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Loaded non-blockingly: as a plain stylesheet this is a render-blocking
-     request to a third-party origin, which shows up directly in Largest
-     Contentful Paint. The print-media swap lets the page paint in the system
-     font stack first, then upgrade. -->
-<link rel="stylesheet" media="print" onload="this.media='all'"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<noscript>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
-</noscript>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600&family=Cascadia+Mono:wght@400;600&display=swap">
 
 <script type="application/ld+json">
 {
@@ -59,8 +48,15 @@
       "codeRepository": "https://github.com/Gabriel-Dalton/claude-statusline-tokens",
       "license": "https://opensource.org/licenses/MIT",
       "image": "https://claude-statusline-tokens.vercel.app/docs/img/og-card.png",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "author": { "@type": "Person", "name": "Gabriel Dalton" },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "Gabriel Dalton"
+      },
       "featureList": [
         "Token totals for the 5-hour and 7-day rate-limit windows",
         "Fable weekly limit, which Claude Code does not send to the status line hook",
@@ -77,66 +73,18 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "How do I see token usage in Claude Code?",
+          "name": "Is the dollar figure my bill?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Claude Code's own status line reports rate-limit percentages but not raw token counts. statusline-tokens reads the transcript files Claude Code already writes to ~/.claude/projects/ and sums the usage block on every assistant turn, so the status line shows token totals for the 5-hour and 7-day windows alongside the percentage."
+            "text": "No. It is what the same tokens would cost at Anthropic's published API rates. On Pro, Max, Team or Enterprise you pay your flat fee whatever it says. Read it as a measure of how hard you are working the model."
           }
         },
         {
           "@type": "Question",
-          "name": "Why does Claude Code say I used over 100 million tokens in one day?",
+          "name": "Why is the token count so high?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Because roughly 97% of that figure is cache reads. Every turn re-sends the whole conversation to the model, and those replayed tokens are billed and counted each time. In a measured 5-hour session of 827 turns with a 130k median context, 164.4M of the 168.2M total was re-read context and only 3.8M was genuinely new work. The number is real, but it is the same conversation being read repeatedly rather than new material."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Is the dollar figure my actual Claude bill?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "No. It is what the same work would have cost at Anthropic's published API rates. On a Claude Pro, Max, Team or Enterprise plan you pay a flat subscription no matter what the status line says. Treat the dollar figure as an intensity signal, not an invoice."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How do I see my Fable weekly limit in Claude Code?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Claude Code meters premium models on a weekly window separate from the plan-wide weekly limit, shown as its own bar in /usage. It is not included in the status line hook payload, which carries only the five_hour and seven_day buckets, so no status line can read it from the hook. statusline-tokens fetches it from the same endpoint /usage uses, where it arrives as a weekly_scoped entry, refreshes it every 15 minutes in a detached process so the render never waits on the network, and shows it as a 'fable 61%' segment with its own reset countdown."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "When does the Claude Code 5-hour limit reset?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Claude Code sends the reset timestamp to the status line hook as a Unix epoch. statusline-tokens renders it as a countdown plus a local clock time and its zone, for example 'resets 2h14m @ 12:38pm PDT', on both the 5-hour and 7-day windows."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Which Claude models does the cost calculation cover?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Claude Fable and Mythos at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session that mixes models still totals correctly."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does statusline-tokens work on macOS or Linux?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "It is written in PowerShell and targets Windows. PowerShell 7 runs on macOS and Linux, and the transcript format is identical there, but the paths and install flow are Windows-first and macOS/Linux are not currently tested."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does it work with more than one account or more than one computer?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes to both. A session started in its own config folder (CLAUDE_CONFIG_DIR, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers. Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with STATUSLINE_DEVICES_DIR and they add each other's totals. The file each computer writes there holds that computer's name, a hash of the account's organization id, and five-minute totals of tokens and cost. If the folder is synced by a cloud service, the file goes wherever that service stores it."
+            "text": "Most of it is cache reads. Claude Code sends the conversation again on every turn, and those tokens are counted each time. In one measured 5-hour session, 97.7% of the tokens were cache reads."
           }
         },
         {
@@ -144,7 +92,31 @@
           "name": "Does it send my data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "It sends no data anywhere, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk. The exception is the Fable weekly limit, which exists in no local file: that makes one GET to Anthropic's own usage endpoint every 15 minutes, the same one /usage calls, using the credentials Claude Code already stores. The access token is never logged or written to disk and only percentages and timestamps are cached. Setting STATUSLINE_SCOPED_LIMITS=0 disables it and the script makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed. Cross-device totals are off by default. If you turn them on, the script also writes one small file to the shared folder you choose, holding the computer's name, a hash of the organization id and token and cost totals; where that folder syncs to is up to you."
+            "text": "There is no telemetry and no third party. Everything is read from files Claude Code already keeps on your disk, with one exception: the Fable limit is fetched from Anthropic's own usage endpoint every 15 minutes, using the sign-in Claude Code already has. Set STATUSLINE_SCOPED_LIMITS=0 to turn that off."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work with more than one account or computer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A session started in its own config folder shows its own account. Totals cover the computer you are on; to include your others, set STATUSLINE_DEVICES_DIR to a shared folder on each. Each computer then writes one file there with its name, a hash of the organization id, and its token and cost totals."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will it slow my prompt down?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A render takes about a second, a third of which is PowerShell starting. That was measured with 840 MB of transcripts from one week. With several windows open, only one of them rescans at a time."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How are the numbers worked out?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Percentages and reset times come straight from Claude Code. Tokens are added up from your local transcripts, counted once per message and priced by the model each turn used. scripts/verify-tokens.ps1 recomputes them a second way so you can check. The README has the detail."
           }
         }
       ]
@@ -152,1650 +124,239 @@
   ]
 }
 </script>
+
 <style>
 :root {
-  --bg:           #ffffff;
-  --bg-soft:      #fafafa;
-  --bg-code:      #0a0a0a;
-  --bg-code-2:    #111111;
-  --border:       #ebebeb;
-  --border-2:     #d4d4d4;
-
-  --fg:           #0a0a0a;
-  --fg-soft:      #1f1f1f;
-  --fg-muted:     #525252;
-  --fg-faint:     #a3a3a3;
-
-  --accent:       #ea580c;
-  --accent-soft:  #fff7ed;
-  --accent-line:  #fed7aa;
-
-  --code-fg:      #e5e5e5;
-  --code-muted:   #737373;
-  --code-amber:   #f59e0b;
-  --code-cyan:    #67e8f9;
-  --code-sage:    #86efac;
-  --code-sky:     #93c5fd;
-  --code-purple:  #c4b5fd;
-  --code-orange:  #fdba74;
-  --code-tan:     #d6c193;
-
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --paper: #ffffff;
+  --ink: #0a0a0a;
+  --muted: #525252;
+  --rule: #ebebeb;
+  --accent: #ea580c;
+  --accent-ink: #c2410c;
+  --term-bg: #0a0a0a;
+  --term-fg: #d4d4d4;
+  --term-dim: #8a8a8a;
+  --sans: 'Bricolage Grotesque', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'SFMono-Regular', Menlo, monospace;
+  --gutter: clamp(20px, 5vw, 64px);
+  --column: 1080px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
-section[id] { scroll-margin-top: 76px; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+h1, h2, p, ol, dl, dd, pre { margin: 0; }
+ol { padding: 0; list-style: none; }
+a { color: var(--ink); text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 0.22em; }
+a:hover { color: var(--accent-ink); }
+code { font-family: var(--mono); font-size: 0.9em; }
+:where(a, button):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.term :where(a, button):focus-visible { outline-color: #ffffff; }
+
+.wrap { max-width: var(--column); margin: 0 auto; padding: 0 var(--gutter); }
+
 .skip-link {
-  position: absolute; left: 12px; top: -48px; z-index: 100;
-  background: var(--fg); color: var(--bg);
-  padding: 8px 14px; border-radius: 6px;
-  font-size: 14px; font-weight: 600; text-decoration: none;
+  position: absolute; left: 12px; top: -60px; z-index: 10;
+  background: var(--ink); color: var(--paper);
+  padding: 8px 14px; border-radius: 4px; text-decoration: none; font-weight: 600;
 }
 .skip-link:focus { top: 12px; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--sans);
-  font-size: 16px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  font-feature-settings: "cv11", "ss01";
-}
+.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 22px; padding-bottom: 22px; }
+.top .name { font-family: var(--mono); font-size: 0.95rem; color: var(--ink); text-decoration: none; }
+.top .name::before { content: '\203A  '; color: var(--accent); font-weight: 600; }
+.top nav { display: flex; gap: 22px; font-size: 0.95rem; }
 
-::selection { background: var(--fg); color: var(--bg); }
-
-a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--border-2); text-underline-offset: 3px; text-decoration-thickness: 1px; }
-a:hover { text-decoration-color: var(--fg); }
-
-img { display: block; max-width: 100%; }
-
-h1, h2, h3, h4 {
-  font-family: var(--sans);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-  color: var(--fg);
-  margin: 0;
-}
-
-p { margin: 0; }
-
-code, pre, kbd, samp {
-  font-family: var(--mono);
-  font-size: 0.9em;
-}
-
-p code, li code, td code, dd code, span code {
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.85em;
-  color: var(--fg-soft);
-  /* Long identifiers like rate_limits.five_hour.used_percentage need to
-     wrap on narrow viewports or they punch through the paragraph box. */
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-.shell {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 0 32px;
-}
-@media (max-width: 600px) { .shell { padding: 0 20px; } }
-@media (max-width: 420px) { .shell { padding: 0 16px; } }
-
-:where(a, button, [tabindex]):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
-
-/* ─────────────────────────────────────────── NAV */
-.nav {
-  border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: saturate(150%) blur(8px);
-  -webkit-backdrop-filter: saturate(150%) blur(8px);
-  position: sticky;
-  top: 0;
-  z-index: 50;
-}
-.nav-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  /* padding-block, NOT the `padding: 18px 0` shorthand. This element is
-     `class="shell nav-row"`, and the shorthand's implied `0` for the
-     horizontal axis silently overrode .shell's own left/right padding —
-     same specificity, declared later, so .nav-row won. The result was a
-     nav with no gutter at all: the brand mark sat at x=0 and the GitHub
-     button ended flush with the viewport edge, both visibly clipped on a
-     phone, while .shell's mobile media queries appeared to have no effect. */
-  padding-block: 18px;
-  gap: 24px;
-}
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--sans);
-  font-weight: 600;
-  font-size: 15px;
-  color: var(--fg);
-  text-decoration: none;
-}
-.brand .mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  background: var(--bg-code);
-  color: var(--accent);
-  border-radius: 6px;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 16px;
-  /* Flex centring centres the glyph's *em box*, not its ink. This glyph
-     carries more space below the mark than above it, so box-centring left
-     it sitting 1.8px high (measured: 1.6px clear above, 3.4px below).
-     line-height:1 removes the inherited half-leading, and the nudge
-     centres what the eye actually sees. */
-  line-height: 1;
-  padding-top: 1px;
-}
-.brand .name { letter-spacing: -0.01em; }
-.brand .tag {
-  font-family: var(--sans);
-  font-size: 11px;
-  color: var(--fg-muted);
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  padding: 2px 8px;
-  border-radius: 999px;
-  margin-left: 4px;
-  font-weight: 500;
-}
-
-.nav-links { display: inline-flex; gap: 4px; align-items: center; }
-.nav-links a {
-  color: var(--fg-muted);
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 8px 12px;
-  border-radius: 6px;
-}
-.nav-links a:hover { color: var(--fg); background: var(--bg-soft); }
-.nav-links .gh {
-  color: #fff;
-  background: var(--bg-code);
-  padding: 8px 14px;
-  margin-left: 8px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.nav-links .gh:hover { background: #262626; color: #fff; }
-.nav-links .gh svg { width: 14px; height: 14px; }
-
-@media (max-width: 820px) {
-  .nav-links a:not(.gh) { display: none; }
-}
-@media (max-width: 420px) {
-  .nav-row { padding-block: 14px; gap: 12px; }
-  .brand .tag { display: none; }
-  .brand .name { font-size: 14px; }
-  .nav-links .gh { padding: 7px 12px; font-size: 13px; }
-}
-
-/* ─────────────────────────────────────────── HERO */
-.hero {
-  padding: 96px 0 80px;
-  text-align: center;
-}
-@media (max-width: 720px) { .hero { padding: 56px 0 48px; } }
-@media (max-width: 420px) { .hero { padding: 40px 0 36px; } }
-
-/* Was a monospace pill in accent orange with a small round dot on the left:
-   the stock "AI landing page" badge. Monospace is load-bearing further down
-   this page — the status-line samples, file paths and env vars are all set
-   in it, and it means "this is literal terminal text". Spending it on a
-   decorative label about the platform diluted that, and the dot read as a
-   live status indicator while indicating nothing at all.
-   It is now what it actually is: a line of metadata above the headline. */
-.eyebrow {
-  display: block;
-  font-family: var(--sans);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg-muted);
-  margin-bottom: 20px;
-}
-
-h1.headline {
-  font-size: clamp(30px, 6vw, 64px);
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  font-weight: 600;
-  max-width: 820px;
-  margin: 0 auto 24px;
-  color: var(--fg);
-  text-wrap: balance;
-}
-h1.headline .accent { color: var(--accent); }
-
-.lede {
-  font-size: clamp(17px, 1.6vw, 19px);
-  color: var(--fg-muted);
-  max-width: 620px;
-  margin: 0 auto 36px;
-  line-height: 1.55;
-}
-
-.cta {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
-  margin-bottom: 56px;
-}
-@media (max-width: 420px) {
-  .cta { display: flex; width: 100%; margin-bottom: 36px; }
-  .cta .btn { flex: 1 1 100%; justify-content: center; }
-}
-.btn {
-  font-family: var(--sans);
-  font-size: 14px;
-  font-weight: 500;
-  padding: 11px 18px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
-  line-height: 1;
-}
-.btn.primary {
-  background: var(--bg-code);
-  color: #fff;
-  border-color: var(--bg-code);
-}
-.btn.primary:hover { background: #262626; border-color: #262626; }
-.btn.ghost {
-  background: var(--bg);
-  color: var(--fg);
-  border-color: var(--border-2);
-}
-.btn.ghost:hover { background: var(--bg-soft); border-color: var(--fg-muted); }
-.btn svg { width: 14px; height: 14px; }
-
-/* Hero terminal screenshot */
-.hero-shot {
-  max-width: 980px;
-  margin: 0 auto;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--bg-code);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.06),
-    0 32px 64px rgba(0, 0, 0, 0.08);
-}
-.hero-shot .titlebar {
-  display: flex;
-  align-items: center;
-  padding: 11px 14px;
-  background: #1a1a1a;
-  border-bottom: 1px solid #262626;
-  gap: 8px;
-}
-/* The three imitation macOS window-control circles that used to sit here
-   are gone. They were not controls, nothing happened when you clicked
-   them, and a macOS window frame around a Windows PowerShell tool was
-   incoherent on top of being stock decoration. What is left is a caption
-   saying what you are looking at, which is all the frame was ever doing
-   honestly. */
-.hero-shot .tb-label {
-  margin-left: 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--code-muted);
-  letter-spacing: 0.04em;
-}
-/* CSS-rendered terminal recreation of the status line */
-.term-body {
-  background: var(--bg-code);
-  padding: 20px 22px 22px;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.6;
-  color: #d4d4d4;
-  /* The hero is centre-aligned and that inherits all the way in here. It
-     never showed while every line was nowrap, but the moment a segment
-     wraps on a phone the continuation line centres itself under its own
-     box, which no terminal has ever done. Terminal output is left-aligned. */
-  text-align: left;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2a2a2a transparent;
-}
-.term-body::-webkit-scrollbar { height: 6px; }
-.term-body::-webkit-scrollbar-track { background: transparent; }
-.term-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
-
-.term-prompt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #d4d4d4;
-}
-.term-prompt .glyph { color: var(--code-amber); font-weight: 600; }
-.term-caret {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  background: #d4d4d4;
-  vertical-align: -2px;
-  animation: term-blink 1.05s steps(2) infinite;
-}
-@keyframes term-blink { 50% { opacity: 0; } }
-
-.statusline {
-  margin-top: 14px;
-  font-size: 13px;
-  font-variant-ligatures: none;
-  font-feature-settings: "tnum";
-  /* Soft-wrap, at every width, which is what a real terminal does with a
-     line this long. It used to be nowrap inside a clipped box: at 1440px
-     the sample was 1660px wide in a 934px container, so 726px of it —
-     44%, including the entire Fable, session and context segments — was
-     simply unreachable unless you thought to drag it sideways. Hiding
-     almost half of the thing the page is selling is worse than showing it
-     on two lines.
-     Segments stay atomic via `.statusline > span` below, so the line
-     breaks between segments and never through the middle of one. */
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 0;
-  row-gap: 4px;
-  /* The sample line is deliberately nowrap — a status line that wrapped
-     would misrepresent what it looks like in a terminal. Its container
-     clips with overflow:hidden to keep the rounded corners, so without
-     this the line was simply cut off mid-segment on a phone with no way
-     to read the rest. Scroll it in place instead, so the page itself
-     never gains a horizontal scrollbar. */
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-/* One segment is one unbreakable unit: it may move to the next line, but
-   it never splits across two. */
-.statusline > span { white-space: nowrap; }
-.statusline::-webkit-scrollbar { height: 6px; }
-.statusline::-webkit-scrollbar-track { background: transparent; }
-.statusline::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-}
-.statusline .seg-dir   { color: #ffaf5f; } /* ANSI 215 */
-.statusline .seg-git   { color: #d7af87; } /* ANSI 180 */
-.statusline .seg-mod   { color: #af87ff; } /* ANSI 141 */
-.statusline .seg-5h    { color: #5fd7ff; } /* ANSI 81  */
-.statusline .seg-7d    { color: #87af87; } /* ANSI 108 */
-.statusline .seg-fab   { color: #d787d7; } /* ANSI 176 */
-.statusline .seg-ses   { color: #d7af00; } /* ANSI 178 */
-.statusline .seg-ctx   { color: #87afd7; } /* ANSI 110 */
-.statusline .seg-sep   { color: #8a8a8a; padding: 0 6px; } /* ANSI 245 */
-
-/* Headroom-tinted percentages, layered over the segment color. The script
-   swaps these in for the bare % readout based on the value: green <50,
-   yellow 50–79, red >=80. */
-.statusline .pct-green  { color: #67d97c; font-weight: 500; } /* ANSI 77  */
-.statusline .pct-yellow { color: #f7c948; font-weight: 500; } /* ANSI 221 */
-.statusline .pct-red    { color: #ff6e6e; font-weight: 500; } /* ANSI 203 */
-
-.statusline.compact { font-size: 13.5px; margin-top: 0; }
-
-@media (max-width: 720px) {
-  .term-body {
-    padding: 16px 16px 18px;
-    font-size: 12px;
-    /* Wrapping handles narrow widths now; keep auto-scroll as fallback. */
-    overflow-x: auto;
-  }
-  .statusline,
-  .statusline.compact {
-    font-size: 12px;
-    /* Wrap segment-by-segment instead of forcing horizontal scroll inside
-       the terminal mock. Mirrors how a real terminal soft-wraps. */
-    white-space: normal;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: 0;
-    row-gap: 4px;
-  }
-  .statusline.compact { font-size: 12.5px; }
-  .statusline > span { white-space: nowrap; }
-}
-
-@media (max-width: 420px) {
-  /* Narrow phones: stack each segment on its own line and drop pipes —
-     the colour blocks already delimit segments and a wrapping pipe at
-     line edges reads as visual noise. */
-  .statusline,
-  .statusline.compact {
-    flex-direction: column;
-    align-items: flex-start;
-    row-gap: 6px;
-  }
-  .statusline .seg-sep { display: none; }
-  /* Below this width the longest segment genuinely cannot fit on one line
-     — at 320px there are about 256px to play with and it needs 324px — so
-     here, and only here, a segment is allowed to run onto a second line
-     rather than be scrolled out of sight.
-     The label and its percentage are joined by a non-breaking space in the
-     markup, so the break always lands inside the parenthetical and never
-     between "5h" and "97%". Splitting a reading from its label is the one
-     wrap that would actively mislead. */
-  .statusline > span { white-space: normal; }
-}
-
-/* ─────────────────────────────────────────── SECTION SHELL */
-.section {
-  padding: 88px 0;
-  border-top: 1px solid var(--border);
-}
-@media (max-width: 720px) { .section { padding: 56px 0; } }
-@media (max-width: 420px) { .section { padding: 40px 0; } }
-
-.section-head {
-  text-align: center;
-  margin-bottom: 48px;
-  max-width: 680px;
-  margin-left: auto;
-  margin-right: auto;
-}
-@media (max-width: 420px) { .section-head { margin-bottom: 32px; } }
-.section-title { text-wrap: balance; }
-/* Sans, not mono. Monospace on this page means "literal terminal text" —
-   it is what the status-line samples, file paths and env vars are set in.
-   Spending it on section labels diluted that, and small-caps monospace in
-   an accent colour is a stock generated-page signature. Same reasoning as
-   the hero eyebrow. */
-.section-eyebrow {
-  font-family: var(--sans);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: var(--fg-muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-}
-.section-title {
-  font-size: clamp(26px, 3.4vw, 36px);
-  font-weight: 600;
+.intro { padding-top: clamp(40px, 8vw, 96px); padding-bottom: clamp(36px, 6vw, 64px); }
+.intro h1 {
+  font-size: clamp(2.25rem, 6.2vw, 4.5rem);
+  line-height: 1.02;
   letter-spacing: -0.025em;
-  margin-bottom: 14px;
-  color: var(--fg);
-}
-.section-kicker {
-  font-size: 17px;
-  color: var(--fg-muted);
-  line-height: 1.55;
-}
-
-/* ─────────────────────────────────────────── FEATURES (replacing compare) */
-/* Three columns, not four. At four, the fifth card sat alone on a second
-   row beside three empty cells and read as a bug rather than a layout.
-   Three divides the six cards evenly at every breakpoint: 3+3 here,
-   2+2+2 below 1080, and a single column below 560. */
-.features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  margin-bottom: 48px;
-}
-@media (max-width: 1080px) { .features { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px)  { .features { grid-template-columns: 1fr; } }
-
-.feature {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 24px;
-  background: var(--bg);
-  transition: border-color 120ms ease, background 120ms ease;
-}
-.feature:hover { border-color: var(--border-2); background: var(--bg-soft); }
-.feature h3 {
-  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--fg);
+  max-width: 17ch;
 }
-.feature p {
-  font-size: 14.5px;
-  color: var(--fg-muted);
-  line-height: 1.55;
+.intro h1 em { font-style: normal; color: var(--accent); }
+.intro p { margin-top: 22px; max-width: 54ch; font-size: clamp(1.0625rem, 1.6vw, 1.25rem); color: var(--muted); }
+.actions { margin-top: 30px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 26px; }
+.button {
+  display: inline-block; background: var(--ink); color: #ffffff;
+  padding: 13px 24px; border-radius: 4px; text-decoration: none; font-weight: 600;
 }
-.feature .icon {
-  width: 32px; height: 32px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: 8px;
-  margin-bottom: 16px;
+.button:hover { background: #262626; color: #ffffff; }
+
+.term { background: var(--term-bg); color: var(--term-fg); padding: clamp(28px, 5vw, 56px) 0; }
+.line {
   font-family: var(--mono);
-  font-weight: 600;
-  font-size: 14px;
+  font-size: clamp(0.875rem, 1.45vw, 1.1875rem);
+  line-height: 1.85;
 }
+.line .seg { white-space: nowrap; }
+.line .sep { color: var(--term-dim); padding: 0 0 0 0.6ch; }
+.dir { color: #ffaf5f; } .git { color: #d7af87; } .mod { color: #af87ff; } .h5 { color: #5fd7ff; }
+.d7 { color: #87af87; } .fab { color: #d787d7; } .ses { color: #d7af00; } .ctx { color: #87afd7; }
+.green { color: #67d97c; } .yellow { color: #f7c948; } .red { color: #ff6e6e; }
 
-/* Stacked green/yellow/red dots used in the "Headroom at a glance" card. */
-.dot-stack { display: inline-flex; gap: 4px; }
-.dot-stack .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.05) inset;
+.parts { margin-top: clamp(28px, 4vw, 44px); border-top: 1px solid #2a2a2a; }
+.parts > div {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 48px;
+  padding: 14px 0; border-bottom: 1px solid #2a2a2a;
 }
-.dot-g { background: #22c55e; }
-.dot-y { background: #f5b733; }
-.dot-r { background: #ef4444; }
+@media (min-width: 1100px) {
+  .parts > div { grid-template-columns: 29rem minmax(0, 1fr); }
+  .parts dt { white-space: nowrap; }
+}
+.parts dt { font-family: var(--mono); font-size: 0.875rem; line-height: 1.7; }
+.parts dd { color: var(--term-fg); font-size: 1rem; max-width: 60ch; }
+.parts dd code { color: #ffffff; }
 
-/* Inline color pills used in body copy when referencing the % bands. */
-.pill {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 0.78em;
-  font-weight: 500;
-  line-height: 1.5;
-  vertical-align: 1px;
-  border: 1px solid transparent;
-}
-.pill-g { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
-.pill-y { background: #fffbeb; color: #92400e; border-color: #fde68a; }
-.pill-r { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.block { padding-top: clamp(48px, 8vw, 96px); }
+.block h2 { font-size: clamp(1.75rem, 3.4vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; font-weight: 600; }
+.block > .wrap > p.after { margin-top: 22px; }
+.block > .wrap > p { margin-top: 12px; color: var(--muted); max-width: 62ch; }
 
-/* ─────────────────────────────────────────── HEADROOM */
-.headroom-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+.steps { margin-top: 28px; counter-reset: step; }
+.steps li {
+  counter-increment: step;
+  display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); column-gap: 10px;
+  padding: 22px 0; border-top: 1px solid var(--rule);
 }
-@media (max-width: 880px) { .headroom-grid { grid-template-columns: 1fr; } }
+.steps li:last-child { border-bottom: 1px solid var(--rule); }
+.steps li::before { content: counter(step); font-family: var(--mono); color: var(--accent-ink); font-weight: 600; padding-top: 1px; }
+.steps strong { font-weight: 600; }
+.steps p { color: var(--muted); max-width: 62ch; }
+.cmd {
+  margin-top: 12px; display: flex; align-items: stretch; max-width: 46rem;
+  background: var(--term-bg); color: #f2f2f2; border-radius: 4px;
+}
+.cmd pre { flex: 1; min-width: 0; padding: 13px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.875rem; line-height: 1.6; }
+.cmd button {
+  flex: none; width: 5.25rem; border: 0; border-left: 1px solid #2a2a2a; border-radius: 0 4px 4px 0;
+  background: transparent; color: #f2f2f2; font: 600 0.875rem var(--sans); cursor: pointer;
+}
+.cmd button:hover { background: #1c1c1c; }
 
-.headroom-card {
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
-  padding: 18px 18px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-.headroom-card figcaption {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--fg-muted);
-  letter-spacing: 0.02em;
-}
-.headroom-card .term-body {
-  border-radius: 8px;
-  padding: 14px 14px 12px;
-  font-size: 12.5px;
-  /* The excerpts are short, but on very narrow phones they can still
-     reach the edge — let them wrap segment-by-segment like the hero. */
-}
-@media (max-width: 420px) {
-  .headroom-card .term-body { padding: 12px; font-size: 12px; }
-}
-.headroom-card .headroom-blurb {
-  font-size: 14px;
-  color: var(--fg-muted);
-  line-height: 1.5;
-  margin: 0;
-}
-/* These three cards previously each carried a tinted border plus a coloured
-   inset stripe down the left edge. Three cards side by side, each ringed in
-   its own semantic colour, is a stock pattern — and it was redundant besides:
-   the thing being demonstrated is that *the percentage* changes colour, and
-   the sample inside each card already shows exactly that. Wrapping the
-   demonstration in more of the same colour competed with it. The cards are
-   now plain; the data carries the meaning. */
+.qa { margin-top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 56px; }
+.qa > div { padding: 22px 0; border-top: 1px solid var(--rule); }
+.qa dt { font-weight: 600; font-size: 1.125rem; line-height: 1.3; }
+.qa dd { margin-top: 8px; color: var(--muted); }
 
-/* ─────────────────────────────────────────── COMPARE TABLE */
-.compare-wrap {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg);
-}
-.compare-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.compare-table thead th {
-  text-align: left;
-  padding: 14px 18px;
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  background: var(--bg-soft);
-  border-bottom: 1px solid var(--border);
-}
-.compare-table thead th.mine { color: var(--accent); }
-.compare-table td {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-  color: var(--fg-soft);
-}
-.compare-table tr:last-child td { border-bottom: 0; }
-.compare-table td.feat { color: var(--fg); font-weight: 500; width: 38%; }
-.compare-table td.mine { background: rgba(234, 88, 12, 0.025); color: var(--fg); }
-.tick { color: #16a34a; font-weight: 600; }
-.cross { color: var(--fg-faint); }
-.partial { color: var(--fg-muted); }
+.foot { margin-top: clamp(56px, 9vw, 112px); border-top: 1px solid var(--rule); }
+.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 28px; padding-top: 26px; padding-bottom: 40px; font-size: 0.95rem; color: var(--muted); }
+.foot nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
 
-@media (max-width: 720px) {
-  .compare-wrap { border-radius: 8px; }
-  .compare-table, .compare-table thead, .compare-table tbody, .compare-table tr, .compare-table td, .compare-table th { display: block; }
-  .compare-table thead { display: none; }
-  .compare-table tr {
-    border-bottom: 1px solid var(--border);
-    padding: 4px 0;
-  }
-  .compare-table tr:last-child { border-bottom: 0; }
-  .compare-table td {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px;
-    padding: 10px 18px;
-    border-bottom: 0;
-    word-break: break-word;
-  }
-  .compare-table td.feat { background: var(--bg-soft); font-weight: 600; grid-template-columns: 1fr; }
-  .compare-table td::before { content: attr(data-col); color: var(--fg-muted); font-size: 12px; }
-  .compare-table td.feat::before { display: none; }
+@media (max-width: 760px) {
+  .line { display: none; }
+  .parts { margin-top: 0; border-top: 0; }
+  .parts > div:first-child { padding-top: 0; }
+  .qa { grid-template-columns: minmax(0, 1fr); }
+  .top nav { gap: 16px; }
 }
-
-/* ─────────────────────────────────────────── ANATOMY */
-.anatomy-shot {
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-  margin-bottom: 36px;
-}
-.anatomy-shot .term-body {
-  padding: 22px 24px;
-}
-
-.data-dict {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.data-dict thead th {
-  text-align: left;
-  padding: 14px 18px;
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  background: var(--bg-soft);
-  border-bottom: 1px solid var(--border);
-}
-.data-dict td {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-.data-dict tr:last-child td { border-bottom: 0; }
-.data-dict .seg {
-  font-family: var(--mono);
-  font-weight: 500;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.data-dict .seg .swatch {
-  display: inline-block;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  margin-right: 8px;
-  vertical-align: middle;
-}
-.data-dict .sample {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--fg-soft);
-}
-.data-dict .source { color: var(--fg-muted); font-size: 13.5px; }
-
-@media (max-width: 720px) {
-  .data-dict, .data-dict thead, .data-dict tbody, .data-dict tr, .data-dict td, .data-dict th { display: block; }
-  .data-dict thead { display: none; }
-  .data-dict tr { border-bottom: 1px solid var(--border); padding: 12px 16px; }
-  .data-dict tr:last-child { border-bottom: 0; }
-  .data-dict td { border: 0; padding: 4px 0; }
-  .data-dict td::before { content: attr(data-col) " · "; color: var(--fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .data-dict .seg::before { display: none; }
-}
-
-/* ─────────────────────────────────────────── INSTALL */
-.install-prereq {
-  border: 1px solid var(--border);
-  background: var(--bg-soft);
-  border-radius: 10px;
-  padding: 18px 20px;
-  margin-bottom: 28px;
-}
-.install-prereq-head {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-weight: 600;
-  margin-bottom: 10px;
-}
-.install-prereq ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--fg-soft);
-  font-size: 14.5px;
-  line-height: 1.6;
-}
-.install-prereq li + li { margin-top: 6px; }
-.install-prereq strong { color: var(--fg); font-weight: 600; }
-
-.step-tip {
-  margin: 12px 0 0 !important;
-  font-size: 13px !important;
-  color: var(--fg-muted) !important;
-  line-height: 1.5;
-}
-.tip-tag {
-  display: inline-block;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 1px solid var(--accent-line);
-  margin-right: 6px;
-  vertical-align: 1px;
-}
-
-.install-aside {
-  margin-top: 32px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-@media (max-width: 880px) { .install-aside { grid-template-columns: 1fr; } }
-.install-aside details {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 14px 16px;
-}
-.install-aside summary {
-  font-weight: 500;
-  font-size: 14px;
-  color: var(--fg);
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.install-aside summary::-webkit-details-marker { display: none; }
-.install-aside summary::before {
-  content: '+';
-  font-family: var(--mono);
-  color: var(--accent);
-  font-weight: 600;
-  transition: transform 120ms ease;
-}
-.install-aside details[open] summary::before { content: '−'; }
-.install-aside p {
-  font-size: 13.5px;
-  color: var(--fg-muted);
-  line-height: 1.55;
-  margin: 10px 0 0;
-}
-.install-aside a { color: var(--fg-muted); }
-.install-aside a:hover { color: var(--fg); }
-
-.install-steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-}
-@media (max-width: 880px) { .install-steps { grid-template-columns: 1fr; } }
-
-.step {
-  display: flex;
-  flex-direction: column;
-  /* Grid items default to min-width:auto, which is the content's min-content.
-     The pre block's longest unbreakable line would force the cell wider than
-     1fr distributes — overflowing the row on desktop. Clamping min-width lets
-     the cell shrink to 1fr and the pre's own overflow-x:auto kicks in. */
-  min-width: 0;
-}
-.step-num {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--accent);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  margin-bottom: 8px;
-}
-.step h3 {
-  font-size: 17px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.step p {
-  font-size: 14.5px;
-  color: var(--fg-muted);
-  margin-bottom: 14px;
-  line-height: 1.55;
-}
-.step pre {
-  margin: 0;
-  background: var(--bg-code);
-  color: var(--code-fg);
-  border-radius: 8px;
-  padding: 14px 16px;
-  font-size: 12.5px;
-  line-height: 1.65;
-  overflow-x: auto;
-  flex: 1;
-  border: 1px solid #1f1f1f;
-  white-space: pre;
-}
-@media (max-width: 720px) {
-  /* On narrow viewports, prefer wrapping over a horizontal scrollbar so the
-     install commands stay readable without sideways scrolling on a phone. */
-  .step pre {
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    font-size: 12px;
-  }
-}
-.step pre .c { color: var(--code-muted); }
-.step pre .k { color: var(--code-sky); }
-.step pre .s { color: var(--code-sage); }
-.step pre .x { color: var(--code-amber); }
-
-/* ─────────────────────────────────────────── METHODOLOGY */
-.methodology {
-  display: grid;
-  grid-template-columns: 1.05fr 1fr;
-  gap: 56px;
-  align-items: start;
-}
-@media (max-width: 880px) { .methodology { grid-template-columns: 1fr; gap: 32px; } }
-
-.methodology-text p {
-  font-size: 16px;
-  color: var(--fg-soft);
-  line-height: 1.65;
-  margin-bottom: 16px;
-}
-.methodology-text p:last-child { margin-bottom: 0; }
-
-.steps-ol {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg);
-}
-.steps-ol li {
-  display: grid;
-  grid-template-columns: 48px 1fr;
-  gap: 8px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-}
-.steps-ol li:last-child { border-bottom: 0; }
-.steps-ol li .idx {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  padding-top: 2px;
-}
-.steps-ol li .body strong {
-  font-weight: 600;
-  color: var(--fg);
-  display: block;
-  margin-bottom: 4px;
-  font-size: 14.5px;
-}
-.steps-ol li .body .meta {
-  color: var(--fg-muted);
-  font-size: 13.5px;
-  line-height: 1.5;
-}
-
-.note {
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  background: var(--bg-soft);
-  border-radius: 8px;
-  font-size: 13.5px;
-  color: var(--fg-muted);
-  line-height: 1.55;
-}
-
-/* ─────────────────────────────────────────── CTA FOOTER */
-.cta-band {
-  border-top: 1px solid var(--border);
-  background: var(--bg-soft);
-  padding: 72px 0;
-  text-align: center;
-}
-@media (max-width: 720px) { .cta-band { padding: 48px 0; } }
-@media (max-width: 420px) { .cta-band { padding: 36px 0; } }
-.cta-band h2 {
-  font-size: clamp(24px, 3vw, 32px);
-  margin-bottom: 12px;
-}
-.cta-band p {
-  font-size: 16px;
-  color: var(--fg-muted);
-  margin-bottom: 24px;
-  max-width: 520px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-/* ─────────────────────────────────────────── FOOT */
-.foot {
-  border-top: 1px solid var(--border);
-  padding: 32px 0;
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-.foot-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.foot a { color: var(--fg-muted); text-decoration: none; }
-.foot a:hover { color: var(--fg); }
-.foot .sep { color: var(--border-2); padding: 0 8px; }
-.foot-left .brand-mini {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-/* ─────────────────────────────────────────── A11Y */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
-}
-
-/* FAQ ------------------------------------------------------------------- */
-.faq-grid { display: grid; gap: 0; margin-top: 8px; }
-.faq-item { border-top: 1px solid var(--border); padding: 26px 0; }
-.faq-item:last-child { border-bottom: 1px solid var(--border); }
-.faq-q {
-  font-size: 17px; font-weight: 600; color: var(--fg);
-  margin: 0 0 10px; letter-spacing: -0.01em;
-}
-.faq-a { margin: 0; color: var(--fg-muted); font-size: 15.5px; line-height: 1.65; max-width: 74ch; }
-.faq-a code { font-family: var(--mono); font-size: 13.5px; background: var(--bg-soft);
-  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
-.faq-a + .faq-a { margin-top: 10px; }
-@media (max-width: 640px) { .faq-q { font-size: 16px; } .faq-a { font-size: 15px; } }
 </style>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 
-<!-- ─────────────────────────────────────────── NAV -->
-<nav class="nav" aria-label="primary">
-  <div class="shell nav-row">
-    <a class="brand" href="./">
-      <span class="mark">›</span>
-      <span class="name">statusline-tokens</span>
-      <span class="tag">v0.8.1</span>
-    </a>
-    <div class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#headroom">Headroom</a>
-      <a href="#anatomy">Anatomy</a>
-      <a href="#fable">Fable</a>
-      <a href="#install">Install</a>
-      <a href="#methodology">Methodology</a>
-      <a href="#faq">FAQ</a>
-      <a class="gh" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.49-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.5-1.08-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.52-1.03 2.19-.82 2.19-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        GitHub
-      </a>
-    </div>
-  </div>
-</nav>
-
-<!-- ─────────────────────────────────────────── HERO -->
-<main id="main">
-<header class="hero">
-  <div class="shell">
-    <span class="eyebrow">Claude Code · Windows · PowerShell</span>
-
-    <h1 class="headline">
-      Token counts and <span class="accent">dollar cost</span> in your Claude Code status line.
-    </h1>
-
-    <p class="lede">
-      Anthropic's status line shows rate-limit percentages. <strong style="color: var(--fg); font-weight: 600;">statusline-tokens</strong> adds the numbers underneath: raw tokens and API-priced cost for the rolling 5-hour and 7-day windows, plus the <a href="#fable" style="color: inherit; text-decoration-color: var(--muted);">Fable weekly limit</a> Claude Code never sends to a status line at all.
-    </p>
-
-    <div class="cta">
-      <a class="btn primary" href="#install">
-        Install in 30 seconds
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
-      </a>
-      <a class="btn ghost" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.49-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.5-1.08-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.52-1.03 2.19-.82 2.19-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View source
-      </a>
-    </div>
-
-    <figure class="hero-shot" aria-label="A recreation of the status line as it appears in Claude Code, showing working directory, git branch, model, 5-hour and 7-day window usage, the Fable weekly limit, the current session, and context size. The 5-hour percentage is red because it has crossed 80%; the 7-day percentage is green; the Fable percentage is yellow at 61%.">
-      <div class="titlebar">
-        <span class="tb-label">claude-code · powershell</span>
-      </div>
-      <div class="term-body">
-        <div class="term-prompt"><span class="glyph">›</span><span class="term-caret" aria-hidden="true"></span></div>
-        <div class="statusline">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm PDT)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
-        </div>
-      </div>
-    </figure>
-  </div>
+<header class="wrap top">
+  <a class="name" href="/">statusline-tokens</a>
+  <nav aria-label="Project links">
+    <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens">GitHub</a>
+    <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/releases/latest">v0.8.1</a>
+  </nav>
 </header>
 
-<!-- ─────────────────────────────────────────── FEATURES -->
-<section class="section" id="features">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">What it adds</div>
-      <h2 class="section-title">The number you actually need is missing.</h2>
-      <p class="section-kicker">
-        Claude Code reports rate-limit percentages. Other status-line packages mirror them. None of them tell you what the session is costing you.
-      </p>
-    </div>
-
-    <div class="features">
-      <div class="feature">
-        <div class="icon">$</div>
-        <h3>API-rate cost</h3>
-        <p>Dollar cost for both windows, priced per model family with the correct input, output, and cache rates.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">F</div>
-        <h3>Fable weekly limit</h3>
-        <p>The premium-model window Claude Code meters separately, and <strong>does not send to any status line</strong>. Fetched from the endpoint <code>/usage</code> reads, so you see it coming. <a href="#fable">How it works</a>.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">#</div>
-        <h3>Raw token totals</h3>
-        <p>Actual tokens consumed in the 5-hour and 7-day windows, summed locally from your transcripts.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">@</div>
-        <h3>Reset countdown</h3>
-        <p>Every window says when it frees up: <code>resets 2h14m @ 12:38pm PDT</code>. The zone is resolved for the reset instant, so a reset past a DST cutover reads correctly, and it survives renders where Claude Code sends no rate-limit data at all.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">›</div>
-        <h3>One PowerShell file</h3>
-        <p>No Node, no daemon, no service. Drop the script next to <code>settings.json</code> and restart.</p>
-      </div>
-      <div class="feature">
-        <div class="icon" aria-hidden="true">
-          <span class="dot-stack">
-            <span class="dot dot-g"></span><span class="dot dot-y"></span><span class="dot dot-r"></span>
-          </span>
-        </div>
-        <h3>Headroom at a glance</h3>
-        <p>The percentage shifts <span class="pill pill-g">green</span> &rarr; <span class="pill pill-y">yellow</span> &rarr; <span class="pill pill-r">red</span> as you burn through the window, so you spot a near-limit before you hit it.</p>
-      </div>
-    </div>
-
-    <div class="compare-wrap">
-      <table class="compare-table">
-        <thead>
-          <tr>
-            <th>Feature</th>
-            <th>Default statusline</th>
-            <th>claude-powerline</th>
-            <th class="mine">statusline-tokens</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="feat">5h / 7d window %</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="tick">●</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Fable weekly limit</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="cross">—</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Raw token totals (5h / 7d)</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="cross">—</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Pay-per-token cost ($)</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="cross">—</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Ephemeral cache pricing (5m / 1h)</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="cross">—</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Per-turn context tokens</td>
-            <td data-col="Default"><span class="cross">—</span></td>
-            <td data-col="claude-powerline"><span class="tick">●</span></td>
-            <td class="mine" data-col="statusline-tokens"><span class="tick">●</span></td>
-          </tr>
-          <tr>
-            <td class="feat">Runtime dependency</td>
-            <td data-col="Default">None</td>
-            <td data-col="claude-powerline"><span class="partial">Node</span></td>
-            <td class="mine" data-col="statusline-tokens">Single <code>.ps1</code></td>
-          </tr>
-        </tbody>
-      </table>
+<main id="main">
+  <div class="wrap intro">
+    <h1>Tokens, <em>dollar cost</em> and reset times in your Claude Code status line.</h1>
+    <p>Claude Code shows how much of your limit is used. This adds how many tokens that was, what it would cost at API rates, and when the limit resets. One PowerShell file for Windows, free and open source.</p>
+    <div class="actions">
+      <a class="button" href="#install">Install</a>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens">Read the source on GitHub</a>
     </div>
   </div>
-</section>
 
-<!-- ─────────────────────────────────────────── HEADROOM -->
-<section class="section" id="headroom">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Headroom</div>
-      <h2 class="section-title">The number changes color before you hit a wall.</h2>
-      <p class="section-kicker">
-        The 5h and 7d percentages come straight from your signed-in Claude account. It is the same number Claude Code uses to throttle you. The status line tints it so you read the band, not the digits.
-      </p>
+  <section class="term" aria-labelledby="parts-title">
+    <div class="wrap">
+      <h2 id="parts-title" class="vh">What the status line shows</h2>
+      <p class="line" aria-label="Example status line"><span class="seg dir">claude-statusline-tokens</span><span class="sep">|</span> <span class="seg git">main</span><span class="sep">|</span> <span class="seg mod">Opus 5</span><span class="sep">|</span> <span class="seg h5">5h <span class="yellow">68%</span> (118.9M tok, $89.65, resets 2h14m @ 12:38pm PDT)</span><span class="sep">|</span> <span class="seg d7">7d <span class="green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="sep">|</span> <span class="seg fab">fable <span class="yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="sep">|</span> <span class="seg ses">session 38.4M ($29.10)</span><span class="sep">|</span> <span class="seg ctx">ctx 63.0k</span></p>
+
+      <dl class="parts">
+        <div><dt class="h5">5h <span class="yellow">68%</span> (118.9M tok, $89.65, resets 2h14m @ 12:38pm PDT)</dt><dd>Your 5-hour limit: how much is used, the tokens behind it, what they would cost at API rates, and when it resets. The percentage is green under 50%, yellow from 50% and red from 80%.</dd></div>
+        <div><dt class="d7">7d <span class="green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</dt><dd>The same four numbers for your weekly limit.</dd></div>
+        <div><dt class="fab">fable <span class="yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</dt><dd>The separate weekly limit on the Fable models. Claude Code tracks it but leaves it out of its own status line.</dd></div>
+        <div><dt class="ses">session 38.4M ($29.10)</dt><dd>Your current stretch of work. It ends after 30 minutes without a turn.</dd></div>
+        <div><dt class="ctx">ctx 63.0k</dt><dd>How much is in the context window right now.</dd></div>
+        <div><dt><span class="dir">claude-statusline-tokens</span> <span class="git">main</span> <span class="mod">Opus 5</span></dt><dd>Folder, git branch and model.</dd></div>
+      </dl>
     </div>
+  </section>
 
-    <div class="headroom-grid">
-      <figure class="headroom-card headroom-green">
-        <figcaption><span class="pill pill-g">green</span> &lt; 50%</figcaption>
-        <div class="term-body">
-          <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in green at 24 percent.">
-            <span class="seg-5h">5h&nbsp;<span class="pct-green">24%</span> (41.2M tok, $31.06)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">9%</span> (98.4M tok, $74.19)</span>
-          </div>
-        </div>
-        <p class="headroom-blurb">Comfortable. Plenty of room left in both windows.</p>
-      </figure>
-
-      <figure class="headroom-card headroom-yellow">
-        <figcaption><span class="pill pill-y">yellow</span> 50&ndash;79%</figcaption>
-        <div class="term-body">
-          <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in yellow at 68 percent.">
-            <span class="seg-5h">5h&nbsp;<span class="pct-yellow">68%</span> (118.9M tok, $89.65)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-yellow">52%</span> (287.3M tok, $217)</span>
-          </div>
-        </div>
-        <p class="headroom-blurb">Pacing matters. Time to wrap up the long-running task before the reset.</p>
-      </figure>
-
-      <figure class="headroom-card headroom-red">
-        <figcaption><span class="pill pill-r">red</span> &ge; 80%</figcaption>
-        <div class="term-body">
-          <div class="statusline compact" aria-label="Status line excerpt with the 5-hour percentage in red at 97 percent.">
-            <span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-red">88%</span> (486.5M tok, $367)</span>
-          </div>
-        </div>
-        <p class="headroom-blurb">Near the limit. A throttle could land mid-turn, so finish or switch accounts.</p>
-      </figure>
+  <section class="block" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <h2 id="install-title">Install</h2>
+      <p>You need Windows 10 or 11, Git, and Claude Code with at least one conversation behind it. PowerShell is already on Windows. It is built and tested on Windows only.</p>
+      <ol class="steps">
+        <li><div>
+          <strong>Clone the repository.</strong>
+          <div class="cmd"><pre><code>git clone https://github.com/Gabriel-Dalton/claude-statusline-tokens</code></pre><button type="button" data-copy>Copy</button></div>
+        </div></li>
+        <li><div>
+          <strong>Run the setup script.</strong>
+          <p>It shows the change it wants to make to <code>settings.json</code> and asks before writing. A backup is saved first. Add <code>-DryRun</code> to see the change without making it.</p>
+          <div class="cmd"><pre><code>cd claude-statusline-tokens; .\setup.ps1</code></pre><button type="button" data-copy>Copy</button></div>
+        </div></li>
+        <li><div>
+          <strong>Open a new Claude Code window.</strong>
+          <p>The status line appears on the next prompt. A conversation that was already open keeps its old one.</p>
+        </div></li>
+      </ol>
+      <p class="after">Prefer to edit <code>settings.json</code> by hand, or something went wrong? The <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens#install">README</a> covers both.</p>
     </div>
+  </section>
 
-    <p class="note" style="margin-top: 32px;">
-      Want different bands? Set <code>STATUSLINE_PCT_THRESHOLDS</code> to a <code>warn,crit</code> pair before Claude Code starts. For example, <code>STATUSLINE_PCT_THRESHOLDS=65,85</code> shifts yellow to 65% and red to 85%. The defaults are <code>50,80</code>.
-    </p>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── ANATOMY -->
-<section class="section" id="anatomy">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Anatomy</div>
-      <h2 class="section-title">Eight segments, eight signals.</h2>
-      <p class="section-kicker">
-        Each segment uses a different ANSI 256-color index so it reads like a dashboard.
-      </p>
+  <section class="block" id="questions" aria-labelledby="questions-title">
+    <div class="wrap">
+      <h2 id="questions-title">Questions</h2>
+      <dl class="qa">
+        <div><dt>Is the dollar figure my bill?</dt><dd>No. It is what the same tokens would cost at Anthropic's published API rates. On Pro, Max, Team or Enterprise you pay your flat fee whatever it says. Read it as a measure of how hard you are working the model.</dd></div>
+        <div><dt>Why is the token count so high?</dt><dd>Most of it is cache reads. Claude Code sends the conversation again on every turn, and those tokens are counted each time. In one measured 5-hour session, 97.7% of the tokens were cache reads.</dd></div>
+        <div><dt>Does it send my data anywhere?</dt><dd>There is no telemetry and no third party. Everything is read from files Claude Code already keeps on your disk, with one exception: the Fable limit is fetched from Anthropic's own usage endpoint every 15 minutes, using the sign-in Claude Code already has. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to turn that off.</dd></div>
+        <div><dt>Does it work with more than one account or computer?</dt><dd>A session started in its own config folder shows its own account. Totals cover the computer you are on; to include your others, set <code>STATUSLINE_DEVICES_DIR</code> to a shared folder on each. Each computer then writes one file there with its name, a hash of the organization id, and its token and cost totals.</dd></div>
+        <div><dt>Will it slow my prompt down?</dt><dd>A render takes about a second, a third of which is PowerShell starting. That was measured with 840 MB of transcripts from one week. With several windows open, only one of them rescans at a time.</dd></div>
+        <div><dt>How are the numbers worked out?</dt><dd>Percentages and reset times come straight from Claude Code. Tokens are added up from your local transcripts, counted once per message and priced by the model each turn used. <code>scripts/verify-tokens.ps1</code> recomputes them a second way so you can check. The <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens#readme">README</a> has the detail.</dd></div>
+      </dl>
     </div>
-
-    <figure class="anatomy-shot" aria-label="Close-up of the status line showing eight colour-coded segments in order: working directory, git branch, model identifier, 5-hour rolling window with a red percentage, 7-day rolling window with a green percentage, Fable weekly limit with a yellow percentage, current session, and current context.">
-      <div class="term-body">
-        <div class="statusline compact">
-          <span class="seg-dir">claude-statusline-tokens</span><span class="seg-sep">|</span><span class="seg-git">main</span><span class="seg-sep">|</span><span class="seg-mod">Opus 5</span><span class="seg-sep">|</span><span class="seg-5h">5h&nbsp;<span class="pct-red">97%</span> (168.2M tok, $127, resets 12m @ 1:50pm PDT)</span><span class="seg-sep">|</span><span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-ses">session 8.2M ($6.18)</span><span class="seg-sep">|</span><span class="seg-ctx">ctx 63.0k (6%)</span>
-        </div>
-      </div>
-    </figure>
-
-    <table class="data-dict">
-      <thead>
-        <tr>
-          <th style="width: 24%;">Segment</th>
-          <th style="width: 30%;">Sample output</th>
-          <th>Derivation</th>
-          <th style="width: 72px;">ANSI</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: var(--code-orange);"><span class="swatch" style="background: #fb923c;"></span>working dir</td>
-          <td data-col="Sample" class="sample">claude-statusline-tokens</td>
-          <td data-col="Derivation" class="source"><code>workspace.current_dir</code> &middot; <code>Split-Path -Leaf</code></td>
-          <td data-col="ANSI" class="source">215</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #b8860b;"><span class="swatch" style="background: #d6c193;"></span>git branch</td>
-          <td data-col="Sample" class="sample">main</td>
-          <td data-col="Derivation" class="source"><code>git rev-parse --abbrev-ref HEAD</code></td>
-          <td data-col="ANSI" class="source">180</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #7c3aed;"><span class="swatch" style="background: #a78bfa;"></span>model</td>
-          <td data-col="Sample" class="sample">Opus 5</td>
-          <td data-col="Derivation" class="source"><code>model.display_name</code> from hook</td>
-          <td data-col="ANSI" class="source">141</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #0891b2;"><span class="swatch" style="background: #22d3ee;"></span>5h window</td>
-          <td data-col="Sample" class="sample">97% (168.2M tok, $127, resets 12m @ 1:50pm PDT)</td>
-          <td data-col="Derivation" class="source"><code>rate_limits.five_hour</code> for % and reset; transcript scan for tokens and cost</td>
-          <td data-col="ANSI" class="source">81</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #16a34a;"><span class="swatch" style="background: #4ade80;"></span>7d window</td>
-          <td data-col="Sample" class="sample">25% (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</td>
-          <td data-col="Derivation" class="source"><code>rate_limits.seven_day</code> for % and reset; transcript scan for tokens and cost</td>
-          <td data-col="ANSI" class="source">108</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #a21caf;"><span class="swatch" style="background: #d787d7;"></span>fable</td>
-          <td data-col="Sample" class="sample">61% (resets 4d6h @ Sun 6am PDT)</td>
-          <td data-col="Derivation" class="source"><code>GET /api/oauth/usage</code> &rarr; <code>limits[]</code> where <code>kind</code> is <code>weekly_scoped</code>; refreshed every 5&nbsp;min off the render path</td>
-          <td data-col="ANSI" class="source">176</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #a16207;"><span class="swatch" style="background: #d7af00;"></span>session</td>
-          <td data-col="Sample" class="sample">8.2M ($6.18)</td>
-          <td data-col="Derivation" class="source">contiguous activity, walking back until a 30-minute gap</td>
-          <td data-col="ANSI" class="source">178</td>
-        </tr>
-        <tr>
-          <td data-col="Segment" class="seg" style="color: #2563eb;"><span class="swatch" style="background: #60a5fa;"></span>context</td>
-          <td data-col="Sample" class="sample">63.0k (6%)</td>
-          <td data-col="Derivation" class="source">last <code>usage</code> block in this session's transcript; % from <code>context_window.used_percentage</code></td>
-          <td data-col="ANSI" class="source">110</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── FABLE -->
-<section class="section" id="fable">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Per-model weekly limit</div>
-      <h2 class="section-title">The Fable limit no status line could show.</h2>
-      <p class="section-kicker">
-        Claude Code meters premium models on a weekly window of their own, separate from your plan-wide weekly limit. Run out of it and Fable is gone for the rest of the week while <code>7d</code> still reads 25%.
-      </p>
-    </div>
-
-    <figure class="anatomy-shot" aria-label="Status line excerpt showing the 7-day window at 25 percent in green next to the Fable weekly limit at 61 percent in yellow.">
-      <div class="term-body">
-        <div class="statusline compact">
-          <span class="seg-7d">7d&nbsp;<span class="pct-green">25%</span> (412.6M tok, $311, resets 4d6h @ Sun 6am PDT)</span><span class="seg-sep">|</span><span class="seg-fab">fable&nbsp;<span class="pct-yellow">61%</span> (resets 4d6h @ Sun 6am PDT)</span>
-        </div>
-      </div>
-    </figure>
-
-    <div class="methodology">
-      <div class="methodology-text">
-        <p>
-          <strong>The hook payload cannot carry it.</strong> Claude Code assembles the status line's <code>rate_limits</code> object from <code>five_hour</code> and <code>seven_day</code> and nothing else. The Fable window is live in the same process, read straight off the <code>anthropic-ratelimit-unified-*</code> response headers alongside the Opus and Sonnet buckets, and none of them are forwarded. No way of parsing the hook JSON will surface it, which is why no status line has shown it, this one included until now.
-        </p>
-        <p>
-          So it is fetched the same way <code>/usage</code> gets it: <code>GET /api/oauth/usage</code>, where the window arrives as a <code>limits[]</code> entry with <code>kind: "weekly_scoped"</code>. The segment is built from whatever scoped windows your account actually has, so a second one appearing server-side shows up without a code change, and an account with none renders nothing.
-        </p>
-        <p>
-          <strong>Your prompt never waits on it.</strong> The render reads a small cache file; when that cache ages past its TTL the render spawns a detached process to do the fetch, and the result lands on the next render. An atomically created lock file means ten open Claude Code windows still make one request between them.
-        </p>
-      </div>
-
-      <div>
-        <ol class="steps-ol">
-          <li>
-            <span class="idx">01</span>
-            <span class="body">
-              <strong>Read the cache</strong>
-              <span class="meta">One small file. No network call on the render path, ever.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">02</span>
-            <span class="body">
-              <strong>Take the lock, or move on</strong>
-              <span class="meta">One fetch per interval across every open window; an orphaned lock clears after 120s.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">03</span>
-            <span class="body">
-              <strong>Fetch detached</strong>
-              <span class="meta">Token held in memory for the request only. Expired token? No request at all.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">04</span>
-            <span class="body">
-              <strong>Degrade honestly</strong>
-              <span class="meta">Older than three hours renders <code>--%</code> rather than passing a stale number off as current.</span>
-            </span>
-          </li>
-        </ol>
-
-        <div class="note">
-          The one part of this status line that leaves your machine, and it goes to Anthropic's own endpoint: no third party, no telemetry. The token is never logged or cached; only percentages and timestamps are written to disk. The same reply also carries the 5-hour and weekly figures, which are kept as a fallback for windows that have been idle too long to have heard anything themselves. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> to switch the segment, the cache and the request off in one go, <code>STATUSLINE_SCOPED_TTL</code> to change the 900-second idle interval, or <code>STATUSLINE_SCOPED_ACTIVE_TTL</code> to change the 90-second one used once that model has actually run.
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── INSTALL -->
-<section class="section" id="install">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Install</div>
-      <h2 class="section-title">Three commands. Roughly thirty seconds.</h2>
-      <p class="section-kicker">
-        First time touching Claude Code? Follow the guided path. <code>setup.ps1</code> does the file copy, the JSON merge, and a smoke test for you. No Node, no npm, no extra tools.
-      </p>
-    </div>
-
-    <div class="install-prereq">
-      <div class="install-prereq-head">Before you start</div>
-      <ul>
-        <li><strong>Claude Code is installed and you've had at least one conversation in it.</strong> That conversation creates the <code>~/.claude/</code> folder we'll be writing into.</li>
-        <li><strong>PowerShell 7+ recommended.</strong> Open a terminal and run <code>pwsh -v</code>. If it errors, run <code>winget install Microsoft.PowerShell</code>. Windows PowerShell 5.1 (the one preinstalled on Windows 10/11) also works.</li>
-        <li><strong>Git on your PATH.</strong> If <code>git --version</code> works in PowerShell, you're set. Otherwise grab it from <a href="https://git-scm.com/download/win" target="_blank" rel="noopener">git-scm.com</a>.</li>
-      </ul>
-    </div>
-
-    <ol class="install-steps">
-      <li class="step">
-        <div class="step-num">Step 01</div>
-        <h3>Clone the repo</h3>
-        <p>Anywhere on disk. The cloned folder is throwaway; <code>setup.ps1</code> copies out the files it needs.</p>
-<pre><span class="x">git</span> clone https://github.com/Gabriel-Dalton/`
-  claude-statusline-tokens</pre>
-      </li>
-      <li class="step">
-        <div class="step-num">Step 02</div>
-        <h3>Run the setup script</h3>
-        <p>Copies the scripts to <code>~/.claude/</code>, shows the JSON it wants to add to <code>settings.json</code>, and asks <code>Y/n</code> before it writes. A backup is saved first.</p>
-<pre><span class="x">cd</span> claude-statusline-tokens
-<span class="x">.\setup.ps1</span></pre>
-        <p class="step-tip"><span class="tip-tag">Tip</span> Curious before committing? Run <code>.\setup.ps1 <span class="x">-DryRun</span></code> first. It prints the exact diff without touching anything.</p>
-      </li>
-      <li class="step">
-        <div class="step-num">Step 03</div>
-        <h3>Open a new Claude Code window</h3>
-        <p>The status line shows up on the next prompt. The current conversation won't pick up the change; you need a fresh one for the new <code>settings.json</code> to load.</p>
-<pre><span class="c"># first render</span>
-<span class="x">cold</span>  ~1.0s   <span class="c"># PS startup + scan</span>
-<span class="x">warm</span>  ~0.3s   <span class="c"># cached, &lt;20s old</span></pre>
-      </li>
-    </ol>
-
-    <div class="install-aside">
-      <details>
-        <summary>Prefer to wire things up by hand?</summary>
-        <p>If you'd rather edit <code>settings.json</code> yourself, the manual path lives in the <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens#manual-install-no-setupps1" target="_blank" rel="noopener">README's manual install section</a>. It's three steps: copy the <code>.ps1</code> next to <code>settings.json</code>, paste a <code>statusLine</code> block in, restart.</p>
-      </details>
-      <details>
-        <summary>On macOS or Linux?</summary>
-        <p>The scripts run under <code>pwsh</code> (PowerShell 7+) on Unix too. Same three commands, but install <code>pwsh</code> first via your package manager (<code>brew install powershell</code> on macOS, your distro's repo on Linux), then clone and run <code>./setup.ps1</code>.</p>
-      </details>
-      <details>
-        <summary>Something went wrong?</summary>
-        <p>The README's <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens#troubleshooting" target="_blank" rel="noopener">troubleshooting section</a> covers the three or four ways this can fail: execution-policy blocks, mojibake characters, empty <code>~/.claude/projects/</code>, and a malformed <code>settings.json</code> falling through silently.</p>
-      </details>
-    </div>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── METHODOLOGY -->
-<section class="section" id="methodology">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Methodology</div>
-      <h2 class="section-title">How the numbers are computed.</h2>
-      <p class="section-kicker">
-        For every <code>.jsonl</code> line that carries a <code>"usage"</code> block in <code>~/.claude/projects/**/*</code>, the script applies the following procedure.
-      </p>
-    </div>
-
-    <div class="methodology">
-      <div class="methodology-text">
-        <p>
-          The <strong>percentages</strong> are not computed locally. They come straight from <code>rate_limits.five_hour.used_percentage</code> and its 7-day sibling. These are the same authoritative numbers Claude Code uses internally for throttling decisions.
-        </p>
-        <p>
-          The <strong>token totals</strong> beneath them are summed locally, exactly the way <code>ccusage</code> does it: a recursive scan of every transcript, regex-extracted, deduplicated by <code>message.id</code>, windowed by ISO timestamp.
-        </p>
-        <p>
-          <strong>Cost</strong> is computed per turn, using the actual model family detected on that transcript line (Opus, Sonnet, or Haiku), with the correct input, output, and cache rates. Ephemeral cache creation bills at the 5-minute rate when the breakdown isn't exposed, which is the API default for unflagged blocks and the cheaper of the two tiers.
-        </p>
-      </div>
-
-      <div>
-        <ol class="steps-ol">
-          <li>
-            <span class="idx">01</span>
-            <span class="body">
-              <strong>Parse timestamp</strong>
-              <span class="meta">Skip the line if it's outside the 7-day cutoff.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">02</span>
-            <span class="body">
-              <strong>Dedupe by message.id</strong>
-              <span class="meta">Assistant turns log once per content block; raw summation would triple-count.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">03</span>
-            <span class="body">
-              <strong>Sum the four fields</strong>
-              <span class="meta">input + output + cache_creation + cache_read.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">04</span>
-            <span class="body">
-              <strong>Price it</strong>
-              <span class="meta">Detect model family on this transcript line; apply the matching API rate.</span>
-            </span>
-          </li>
-          <li>
-            <span class="idx">05</span>
-            <span class="body">
-              <strong>Window the totals</strong>
-              <span class="meta">Add to 7d. If the timestamp also clears the 5-hour cutoff, add to 5h.</span>
-            </span>
-          </li>
-        </ol>
-
-        <div class="note">
-          Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A transcript that has not changed is never read twice, and a first scan of a large history is spread across renders so it always finishes inside the status line timeout. Measured on 840 MB of transcripts from the last seven days: 0.9 seconds for a cached render and 2.5 seconds for one that picks up new turns, down from 24 and 28 seconds before v0.7.0. Only one window scans at a time.
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── FAQ -->
-<section class="section" id="faq">
-  <div class="shell">
-    <div class="section-head">
-      <div class="section-eyebrow">Questions</div>
-      <h2 class="section-title">The ones everybody asks.</h2>
-      <p class="section-kicker">
-        Mostly about that alarming number in the middle of the bar.
-      </p>
-    </div>
-
-    <div class="faq-grid">
-      <div class="faq-item">
-        <h3 class="faq-q">How do I see token usage in Claude Code?</h3>
-        <p class="faq-a">Claude Code's own status line reports rate-limit percentages but not raw token counts. <strong>statusline-tokens</strong> reads the transcript files Claude Code already writes to <code>~/.claude/projects/</code> and sums the <code>usage</code> block on every assistant turn, so the bar shows token totals for the 5-hour and 7-day windows next to the percentage.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Why does it say I used over 100 million tokens in one day?</h3>
-        <p class="faq-a">Because roughly <strong>97% of that number is cache reads</strong>. Every turn re-sends the entire conversation to the model, and those replayed tokens are billed and counted each time.</p>
-        <p class="faq-a">A real measurement from a 5-hour session: <strong>168.2M tokens total</strong> across 827 assistant turns, of which <strong>164.4M was re-read context</strong> and only <strong>3.8M was genuinely new work</strong>: the words the model actually wrote, plus what was newly sent. The arithmetic that confirms it is <code>827 turns &times; 198.8k average context = 164.4M</code>.</p>
-        <p class="faq-a">The number is real. It is just the same conversation being read over and over, not 168 million tokens of new material. Run <code>scripts/verify-tokens.ps1</code> to reproduce that breakdown on your own transcripts.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Is the dollar figure my actual Claude bill?</h3>
-        <p class="faq-a">No. It is what the same work would have cost at Anthropic's published <strong>API</strong> rates. On a Claude Pro, Max, Team or Enterprise plan you pay a flat subscription no matter what the bar says. Read it as an intensity signal, not an invoice.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">When does the Claude Code 5-hour limit reset?</h3>
-        <p class="faq-a">Claude Code hands the reset timestamp to the status-line hook as a Unix epoch. The bar renders it as a countdown plus a local clock time and its zone, <code>resets 2h14m @ 12:38pm PDT</code>, on both the 5-hour and 7-day windows, so you can see whether to push on or take a break.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Which models does the pricing cover?</h3>
-        <p class="faq-a">Claude Fable and Mythos at $10/$50 per million tokens, the current Opus line (Opus 5, 4.8, 4.7, 4.6, 4.5) at $5/$25, older Opus (4.1, 4.0, Opus 3) at $15/$75, Sonnet at $3/$15 and Haiku at $1/$5. Each turn is priced using the model recorded on that turn, so a session mixing models still totals correctly.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Does it work on macOS or Linux?</h3>
-        <p class="faq-a">It is PowerShell and targets Windows. PowerShell 7 runs on macOS and Linux and the transcript format is identical there, but the paths and the install flow are Windows-first and the other platforms are not currently tested.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">How do I see my Fable weekly limit?</h3>
-        <p class="faq-a">Claude Code meters premium models on a weekly window separate from your plan-wide weekly limit, and <code>/usage</code> draws it as its own bar. It is <strong>not in the status-line hook payload</strong>, which carries the <code>five_hour</code> and <code>seven_day</code> buckets and nothing else, so no status line can read it from the hook.</p>
-        <p class="faq-a">This one fetches it from the endpoint <code>/usage</code> itself uses and renders it as a <code>fable 61%</code> segment with its own reset countdown. The fetch happens in a detached process every 15 minutes, so your prompt never waits on the network. <a href="#fable">Full detail here</a>.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Does it work with more than one account or more than one computer?</h3>
-        <p class="faq-a">Yes to both. A session started in its own config folder (<code>CLAUDE_CONFIG_DIR</code>, which is how account switchers run a second login) reads that folder's account, limits and transcripts, so two accounts open side by side each show their own numbers.</p>
-        <p class="faq-a">Token and cost totals come from transcripts on the machine drawing the line. To include your other computers, point each one at a shared folder with <code>STATUSLINE_DEVICES_DIR</code> and they add each other's totals. The file each computer writes there holds that computer's name, a hash of the account's organization id, and five-minute totals of tokens and cost. If the folder is synced by a cloud service, the file goes wherever that service stores it.</p>
-      </div>
-
-      <div class="faq-item">
-        <h3 class="faq-q">Does it send my data anywhere?</h3>
-        <p class="faq-a">It sends <strong>no data anywhere</strong>, and there is no telemetry or third party involved. Every segment but one reads only files already on your disk.</p>
-        <p class="faq-a">The exception is the Fable limit, which exists in no local file: that makes one <code>GET</code> to Anthropic's own usage endpoint every 15 minutes, the same one <code>/usage</code> calls, using the credentials Claude Code already stores. The token is never logged or written to disk; only percentages and timestamps are cached. Set <code>STATUSLINE_SCOPED_LIMITS=0</code> and it makes no network calls at all. It is a single PowerShell file you can read end to end, MIT licensed. Cross-device totals are off by default. If you turn them on, the script also writes one small file to the shared folder you choose, holding the computer's name, a hash of the organization id and token and cost totals; where that folder syncs to is up to you.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────── CTA BAND -->
-<section class="cta-band">
-  <div class="shell">
-    <h2>Drop it in and see your burn rate.</h2>
-    <p>One PowerShell file. Open source under MIT.</p>
-    <div class="cta" style="margin-bottom: 0;">
-      <a class="btn primary" href="https://github.com/Gabriel-Dalton/claude-statusline-tokens" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.49-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.5-1.08-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.52-1.03 2.19-.82 2.19-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        Star on GitHub
-      </a>
-      <a class="btn ghost" href="#install">Read install steps</a>
-    </div>
-  </div>
-</section>
-
+  </section>
 </main>
 
-<!-- ─────────────────────────────────────────── FOOTER -->
 <footer class="foot">
-  <div class="shell foot-row">
-    <div class="foot-left">
-      <span class="brand-mini"><span style="color: var(--accent);">›</span> statusline-tokens</span>
-      <span class="sep">·</span>
-      MIT
-      <span class="sep">·</span>
-      © 2026 Gabriel Dalton
-    </div>
-    <div>
-      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens">GitHub</a>
-      <span class="sep">·</span>
-      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues">Issues</a>
-      <span class="sep">·</span>
-      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/LICENSE">License</a>
-    </div>
+  <div class="wrap">
+    <span>MIT licence. Made by <a href="https://gabrieldalton.com">Gabriel Dalton</a>.</span>
+    <nav aria-label="More">
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens#readme">README</a>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/Gabriel-Dalton/claude-statusline-tokens/issues">Report a bug</a>
+    </nav>
   </div>
 </footer>
 
+<script>
+document.querySelectorAll('[data-copy]').forEach(function (button) {
+  button.addEventListener('click', function () {
+    var text = button.parentElement.querySelector('code').textContent;
+    navigator.clipboard.writeText(text).then(function () {
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+    });
+  });
+});
+</script>
 </body>
 </html>
