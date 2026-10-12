@@ -1194,7 +1194,7 @@ h1.headline .accent { color: var(--accent); }
     <a class="brand" href="./">
       <span class="mark">›</span>
       <span class="name">statusline-tokens</span>
-      <span class="tag">v0.8.0</span>
+      <span class="tag">v0.8.1</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -1688,7 +1688,7 @@ h1.headline .accent { color: var(--accent); }
         </ol>
 
         <div class="note">
-          Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A transcript that has not changed is never read twice, and a first scan of a large history is spread across renders so it always finishes inside the status line timeout. Measured on 840 MB of transcripts from the last seven days: 1.2 seconds for a cached render and 3 seconds for one that picks up new turns, down from 24 and 28 seconds before v0.7.0.
+          Field-level regex extraction is ~10&times; faster than <code>ConvertFrom-Json</code> per line on a 20 MB transcript pile. A transcript that has not changed is never read twice, and a first scan of a large history is spread across renders so it always finishes inside the status line timeout. Measured on 840 MB of transcripts from the last seven days: 0.9 seconds for a cached render and 2.5 seconds for one that picks up new turns, down from 24 and 28 seconds before v0.7.0. Only one window scans at a time.
         </div>
       </div>
     </div>

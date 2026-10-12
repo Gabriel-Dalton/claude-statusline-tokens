@@ -716,6 +716,11 @@ $lastModelTurns = @{}
 
 $projectsDir       = [System.IO.Path]::Combine($claudeDir, 'projects')
 $cachePath         = [System.IO.Path]::Combine($claudeDir, 'statusline-tokens.cache.json')
+$statePath         = [System.IO.Path]::Combine($claudeDir, 'statusline-transcripts.cache.json')
+$transcriptStateOut  = $null
+$cachedSessionTok    = [long]0
+$cachedSessionCost   = 0.0
+$cachedSessionLatest = $null
 $accountsPath      = [System.IO.Path]::Combine($claudeDir, 'statusline-accounts.json')
 
 $devicesDir     = ([string]$env:STATUSLINE_DEVICES_DIR).Trim()
@@ -919,17 +924,23 @@ if ($currentAccount) {
     }
 }
 
+$checkpointTimes = $null
 function Account-At([DateTime]$t) {
     if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
-    $acct = $script:checkpoints[0]
-    foreach ($cp in $script:checkpoints) {
-
-        $cpTime = ConvertTo-ResetUtc $cp.from
-        if ($null -eq $cpTime) {
-            Write-DebugLog "unparseable checkpoint 'from': $($cp.from)" -Scope 'checkpoint-parse'
-            continue
+    if ($null -eq $script:checkpointTimes) {
+        $script:checkpointTimes = New-Object System.Collections.ArrayList
+        foreach ($cp in $script:checkpoints) {
+            $cpTime = ConvertTo-ResetUtc $cp.from
+            if ($null -eq $cpTime) {
+                Write-DebugLog "unparseable checkpoint 'from': $($cp.from)" -Scope 'checkpoint-parse'
+                continue
+            }
+            [void]$script:checkpointTimes.Add(@{ time = $cpTime; cp = $cp })
         }
-        if ($t -ge $cpTime) { $acct = $cp } else { break }
+    }
+    $acct = $script:checkpoints[0]
+    foreach ($e in $script:checkpointTimes) {
+        if ($t -ge $e.time) { $acct = $e.cp } else { break }
     }
     return $acct
 }
@@ -945,8 +956,35 @@ $rxCache5m  = [regex]'"ephemeral_5m_input_tokens":(\d+)'
 $rxCache1h  = [regex]'"ephemeral_1h_input_tokens":(\d+)'
 
 $cacheTtlSec = 20
+$cacheTtlMaxSec = 300
+$scanLockStaleSec = 60
+$scanLockPath = [System.IO.Path]::Combine($claudeDir, 'statusline-tokens.scan.lock')
+$scanLockHeld = $false
+$cachedScanMs = $null
+$cachedWindow5h = $null
+$cachedWindow7d = $null
+$cachedIncomplete = $false
 
-$cacheSchemaVersion = 3
+function Test-ScanLock([string]$Path) {
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $age = ([DateTime]::UtcNow - (Get-Item -LiteralPath $Path).LastWriteTimeUtc).TotalSeconds
+        return ($age -ge 0 -and $age -lt $script:scanLockStaleSec)
+    } catch { return $false }
+}
+function Enter-ScanLock([string]$Path) {
+    try {
+        if ((Test-Path -LiteralPath $Path) -and -not (Test-ScanLock $Path)) {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        }
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew,
+                                     [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $fs.Close()
+        return $true
+    } catch { return $false }
+}
+
+$cacheSchemaVersion = 4
 $useCache = $false
 $scanBudgetMs = 5000
 $scanIncomplete = $false
@@ -1002,7 +1040,19 @@ if (Test-Path $cachePath) {
                 $sameWindow = $false
             }
         }
-        if ($age -ge 0 -and $age -lt $cacheTtlSec -and $cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion -and $sameWindow -and -not $cache.scanIncomplete) {
+        $ttl = [double]$cacheTtlSec
+        if ($cache.scanMs) {
+            $cachedScanMs = [double]$cache.scanMs
+            $ttl = [math]::Max($ttl, [math]::Min([double]$cacheTtlMaxSec, $cachedScanMs / 100.0))
+        }
+        $cacheMine  = ($cachedOrg -eq $currentOrgKey -and $cachedVer -eq $cacheSchemaVersion)
+        $cacheFresh = ($age -ge 0 -and $age -lt $ttl -and $cacheMine -and $sameWindow -and -not $cache.scanIncomplete)
+        if ($cacheMine) {
+            $cachedWindow5h   = $cache.window5h
+            $cachedWindow7d   = $cache.window7d
+            $cachedIncomplete = [bool]$cache.scanIncomplete
+        }
+        if ($cacheFresh -or ($cacheMine -and (Test-ScanLock $scanLockPath))) {
             $tok5h       = [long]$cache.tok5h
             $tok7d       = [long]$cache.tok7d
             $cost5h      = [double]$cache.cost5h
@@ -1011,10 +1061,10 @@ if (Test-Path $cachePath) {
             $useCache    = $true
         }
 
-        if ($cachedVer -eq $cacheSchemaVersion -and $cache.PSObject.Properties.Match('transcripts').Count -gt 0 -and $cache.transcripts) {
-            foreach ($prop in $cache.transcripts.PSObject.Properties) {
-                $transcriptCache[$prop.Name] = $prop.Value
-            }
+        if ($useCache) {
+            $cachedSessionTok    = [long]$cache.tokSession
+            $cachedSessionCost   = [double]$cache.costSession
+            $cachedSessionLatest = ConvertTo-ResetUtc $cache.sessionLatestUtc
         }
 
         if ($cachedOrg -eq $currentOrgKey) {
@@ -1044,6 +1094,17 @@ function Get-WindowStart([DateTime]$NowRef, $ResetUtc, [TimeSpan]$Length) {
     if ($start -lt $floor)  { return $floor }
     if ($start -gt $NowRef) { return $NowRef }
     return $start
+}
+
+if (-not $useCache -and (Test-Path $cachePath) -and (Test-Path $statePath)) {
+    try {
+        $state = [System.IO.File]::ReadAllText($statePath) | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$state.schemaVersion -eq $cacheSchemaVersion -and $state.transcripts) {
+            foreach ($prop in $state.transcripts.PSObject.Properties) {
+                $transcriptCache[$prop.Name] = $prop.Value
+            }
+        }
+    } catch { Write-DebugLog $_ -Scope 'state-read' }
 }
 
 $cut5h = Get-WindowStart $nowUtc (Get-LaterStamp $reset5hUtc $storeReset5hUtc) ([TimeSpan]::FromHours(5))
@@ -1095,6 +1156,63 @@ function Parse-UsageLine([string]$line, [DateTime]$cut7dRef) {
     ) / 1000000.0
 
     return @{ ticks = $t.Ticks; sum = $sum; cost = $cost; msgId = $msgId; modelId = $modelId }
+}
+
+function Get-LastUsageLineFromTail([string]$Path) {
+    $found = $null
+    $fs = $null; $sr = $null
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $tail = 1048576
+        $seeked = $fs.Length -gt $tail
+        if ($seeked) { [void]$fs.Seek(-$tail, [System.IO.SeekOrigin]::End) }
+        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $false, 65536, $false)
+        if ($seeked) { [void]$sr.ReadLine() }
+        while (-not $sr.EndOfStream) {
+            $line = $sr.ReadLine()
+            if (-not $line) { continue }
+            if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }
+            if ($line.IndexOf('"usage":{') -lt 0) { continue }
+            $found = $line
+        }
+    } catch { Write-DebugLog $_ -Scope 'ctx-tail-read' }
+    finally {
+        if ($sr) { try { $sr.Dispose() } catch { Write-DebugLog $_ -Scope 'ctx-tail-read' } }
+        elseif ($fs) { try { $fs.Dispose() } catch { Write-DebugLog $_ -Scope 'ctx-tail-read' } }
+    }
+    return $found
+}
+
+function Write-TranscriptState([string]$Path, $State) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append(('{{"schemaVersion":{0},"transcripts":{{' -f $script:cacheSchemaVersion))
+    $firstFile = $true
+    foreach ($key in $State.Keys) {
+        $entry = $State[$key]
+        if (-not $firstFile) { [void]$sb.Append(',') }
+        $firstFile = $false
+        $name = ([string]$key).Replace('\', '\\').Replace('"', '\"')
+        [void]$sb.Append(('"{0}":{{"length":{1},"lastScanOffset":{2},"turns":[' -f $name, [long]$entry.length, [long]$entry.lastScanOffset))
+        $firstTurn = $true
+        foreach ($t in $entry.turns) {
+            if (-not $firstTurn) { [void]$sb.Append(',') }
+            $firstTurn = $false
+            [void]$sb.Append('[').Append([long]$t.ticks).Append(',').Append([long]$t.sum).Append(',')
+            [void]$sb.Append(([double]$t.cost).ToString('0.######', [Globalization.CultureInfo]::InvariantCulture))
+            [void]$sb.Append(',"').Append([string]$t.msgId).Append('","').Append([string]$t.modelId).Append('"]')
+        }
+        [void]$sb.Append(']}')
+    }
+    [void]$sb.Append('}}')
+    $tmp = '{0}.{1}.tmp' -f $Path, [System.Diagnostics.Process]::GetCurrentProcess().Id
+    try {
+        [System.IO.File]::WriteAllText($tmp, $sb.ToString(), [System.Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue }
+        [System.IO.File]::Move($tmp, $Path)
+    } catch {
+        Write-DebugLog $_ -Scope 'state-write'
+        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch { Write-DebugLog $_ -Scope 'state-write' }
+    }
 }
 
 function Apply-Turn($turn) {
@@ -1152,6 +1270,7 @@ function Apply-Turn($turn) {
 }
 
 if (-not $useCache -and (Test-Path $projectsDir)) {
+    $scanLockHeld = Enter-ScanLock $scanLockPath
     $seen = @{}
 
     $turns = New-Object System.Collections.ArrayList
@@ -1169,7 +1288,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
         if ($transcriptCache.ContainsKey($key)) { $cached = $transcriptCache[$key] }
 
         $resumeOffset = 0L
-        $kept = @()
+        $kept = New-Object System.Collections.ArrayList
         if ($cached) {
             $cachedLen = [long]$cached.length
             if ($currentLen -lt $cachedLen) {
@@ -1177,11 +1296,10 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
                 $resumeOffset = 0L
             } else {
                 $resumeOffset = [long]$cached.lastScanOffset
-                if ($cached.PSObject.Properties.Match('turns').Count -gt 0 -and $cached.turns) {
+                if ($cached.turns) {
                     foreach ($prev in $cached.turns) {
-
-                        if ([long]$prev.ticks -lt $scanFloor.Ticks) { continue }
-                        $kept += ,(@{ ticks = [long]$prev.ticks; sum = [long]$prev.sum; cost = [double]$prev.cost; msgId = [string]$prev.msgId })
+                        if ([long]$prev[0] -lt $scanFloor.Ticks) { continue }
+                        [void]$kept.Add(@{ ticks = [long]$prev[0]; sum = [long]$prev[1]; cost = [double]$prev[2]; msgId = [string]$prev[3]; modelId = [string]$prev[4] })
                     }
                 }
             }
@@ -1229,14 +1347,11 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             }
         }
 
-        $turnsForCache = @()
-        foreach ($k in $kept)         { $turnsForCache += ,$k }
-        foreach ($n in $newTurnsForCache) { $turnsForCache += ,$n }
+        [void]$kept.AddRange($newTurnsForCache)
         $transcriptStateOut[$key] = @{
             length         = $currentLen
             lastScanOffset = $endOffset
-            lastUsageLine  = $lastUsageLineThisFile
-            turns          = $turnsForCache
+            turns          = $kept
         }
     }
 }
@@ -1249,32 +1364,33 @@ if ($devicesEnabled -and -not $useCache) {
     $tok7d  += $peers.tok7d;  $cost7d += $peers.cost7d
 }
 
+$gapTicks = [long]$sessionGapMinutes * [TimeSpan]::TicksPerMinute
+$sessionLatestTicks = [long]0
+$scannedSessionTok  = [long]0
+$scannedSessionCost = 0.0
 if ($useCache) {
-    $turns = New-Object System.Collections.ArrayList
-    foreach ($entry in $transcriptCache.Values) {
-        if (-not $entry) { continue }
-        if ($entry.PSObject.Properties.Match('turns').Count -le 0) { continue }
-        if (-not $entry.turns) { continue }
-        foreach ($t in $entry.turns) {
-
-            if ([long]$t.ticks -lt $scanFloor.Ticks) { continue }
-            [void]$turns.Add(@{ ticks = [long]$t.ticks; sum = [long]$t.sum; cost = [double]$t.cost })
-        }
+    $scannedSessionTok  = $cachedSessionTok
+    $scannedSessionCost = $cachedSessionCost
+    if ($cachedSessionLatest) { $sessionLatestTicks = ([DateTime]$cachedSessionLatest).Ticks }
+} elseif ($turns -and $turns.Count -gt 0) {
+    $n = $turns.Count
+    $keys  = New-Object long[] $n
+    $order = New-Object int[] $n
+    for ($i = 0; $i -lt $n; $i++) { $keys[$i] = [long]$turns[$i].ticks; $order[$i] = $i }
+    [Array]::Sort($keys, $order)
+    $sessionLatestTicks = $keys[$n - 1]
+    $prev = $sessionLatestTicks
+    for ($i = $n - 1; $i -ge 0; $i--) {
+        if (($prev - $keys[$i]) -gt $gapTicks) { break }
+        $e = $turns[$order[$i]]
+        $scannedSessionTok  += [long]$e.sum
+        $scannedSessionCost += [double]$e.cost
+        $prev = $keys[$i]
     }
 }
-if ($turns -and $turns.Count -gt 0) {
-    $gapTicks = [long]$sessionGapMinutes * [TimeSpan]::TicksPerMinute
-    $sorted = @($turns | Sort-Object -Property { $_.ticks } -Descending)
-    $latestTicks = $sorted[0].ticks
-    if (($nowUtc.Ticks - $latestTicks) -le $gapTicks) {
-        $prev = $latestTicks
-        foreach ($e in $sorted) {
-            if (($prev - $e.ticks) -gt $gapTicks) { break }
-            $tokSession  += [long]$e.sum
-            $costSession += [double]$e.cost
-            $prev = $e.ticks
-        }
-    }
+if ($sessionLatestTicks -gt 0 -and ($nowUtc.Ticks - $sessionLatestTicks) -le $gapTicks) {
+    $tokSession  = $scannedSessionTok
+    $costSession = $scannedSessionCost
 }
 
 $pct5h = $hookFields.pct5h
@@ -1299,9 +1415,17 @@ try {
 
     if ($null -ne $reset5hUtc) { $payload.resets5h = $reset5hUtc.ToString('o') }
     if ($null -ne $reset7dUtc) { $payload.resets7d = $reset7dUtc.ToString('o') }
-    if ($scanIncomplete) { $payload.scanIncomplete = $true }
-    if ($null -ne $live5hUtc) { $payload.window5h = ([DateTime]$live5hUtc).ToString('o') }
-    if ($null -ne $live7dUtc) { $payload.window7d = ([DateTime]$live7dUtc).ToString('o') }
+    if ($useCache) {
+        if ($cachedIncomplete) { $payload.scanIncomplete = $true }
+        if ($cachedWindow5h) { $payload.window5h = ([DateTime](ConvertTo-ResetUtc $cachedWindow5h)).ToString('o') }
+        if ($cachedWindow7d) { $payload.window7d = ([DateTime](ConvertTo-ResetUtc $cachedWindow7d)).ToString('o') }
+        if ($null -ne $cachedScanMs) { $payload.scanMs = $cachedScanMs }
+    } else {
+        if ($scanIncomplete) { $payload.scanIncomplete = $true }
+        if ($null -ne $live5hUtc) { $payload.window5h = ([DateTime]$live5hUtc).ToString('o') }
+        if ($null -ne $live7dUtc) { $payload.window7d = ([DateTime]$live7dUtc).ToString('o') }
+        if ($scanWatch) { $payload.scanMs = [long]$scanWatch.ElapsedMilliseconds }
+    }
 
     $modelTurnsOut = @{}
     foreach ($mk in $lastModelTurns.Keys) {
@@ -1309,14 +1433,15 @@ try {
     }
     $payload.lastModelTurns = $modelTurnsOut
 
-    if ($useCache -or -not (Test-Path $projectsDir)) {
-        if ($transcriptCache.Count -gt 0) { $payload.transcripts = $transcriptCache }
-    } else {
-        $payload.transcripts = $transcriptStateOut
+    $payload.tokSession  = $scannedSessionTok
+    $payload.costSession = $scannedSessionCost
+    if ($sessionLatestTicks -gt 0) {
+        $payload.sessionLatestUtc = ([DateTime]::new($sessionLatestTicks, [DateTimeKind]::Utc)).ToString('o')
     }
-
-    $body = $payload | ConvertTo-Json -Compress -Depth 6 -ErrorAction Stop
+    $body = $payload | ConvertTo-Json -Compress -Depth 4 -ErrorAction Stop
     [System.IO.File]::WriteAllText($cachePath, $body, [System.Text.UTF8Encoding]::new($false))
+    if ($null -ne $transcriptStateOut) { Write-TranscriptState $statePath $transcriptStateOut }
+    if ($scanLockHeld) { Remove-Item -LiteralPath $scanLockPath -Force -ErrorAction SilentlyContinue }
 } catch { Write-DebugLog $_ -Scope 'cache-write' }
 
 $scopedLimits     = @()
@@ -1438,24 +1563,8 @@ if ($hookFields.transcript_path -and (Test-Path $hookFields.transcript_path)) {
     $lastUsageLine = $null
     $tpath = [string]$hookFields.transcript_path
 
-    $hit = $null
-    if ($transcriptStateOut -and $transcriptStateOut.ContainsKey($tpath)) {
-        $hit = $transcriptStateOut[$tpath]
-    } elseif ($transcriptCache -and $transcriptCache.ContainsKey($tpath)) {
-        $hit = $transcriptCache[$tpath]
-    } else {
-        try {
-            $normalized = (Get-Item -LiteralPath $tpath -ErrorAction Stop).FullName
-            if ($transcriptStateOut -and $transcriptStateOut.ContainsKey($normalized)) {
-                $hit = $transcriptStateOut[$normalized]
-            } elseif ($transcriptCache -and $transcriptCache.ContainsKey($normalized)) {
-                $hit = $transcriptCache[$normalized]
-            }
-        } catch { Write-DebugLog $_ -Scope 'ctx-path-normalize' }
-    }
-    if ($hit -and $hit.lastUsageLine) {
-        $lastUsageLine = [string]$hit.lastUsageLine
-    } else {
+    $lastUsageLine = Get-LastUsageLineFromTail $tpath
+    if (-not $lastUsageLine) {
         foreach ($line in [System.IO.File]::ReadLines($tpath)) {
 
             if ($line.IndexOf('"role":"assistant"') -lt 0) { continue }

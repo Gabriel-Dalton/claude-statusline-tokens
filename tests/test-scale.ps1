@@ -19,6 +19,7 @@ $src = $src.Replace("[Environment]::GetFolderPath('UserProfile')", '$env:USERPRO
 $transcript = Join-Path $claude 'projects\proj\session.jsonl'
 $cachePath  = Join-Path $claude 'statusline-tokens.cache.json'
 $storePath  = Join-Path $claude 'statusline-limits.cache.json'
+$statePath  = Join-Path $claude 'statusline-transcripts.cache.json'
 $epoch = New-Object DateTime(1970,1,1,0,0,0,[DateTimeKind]::Utc)
 function E([DateTime]$u) { [long]($u - $epoch).TotalSeconds }
 
@@ -52,7 +53,10 @@ function Tok([string]$line, [string]$label) {
     switch ($Matches[2]) { 'k' { $n * 1000 } 'M' { $n * 1000000 } 'B' { $n * 1000000000 } default { $n } }
 }
 function Read-Cache { [System.IO.File]::ReadAllText($cachePath) }
-function Cached-Turns { ([regex]::Matches((Read-Cache), '"ticks":')).Count }
+function Cached-Turns {
+    if (-not (Test-Path $statePath)) { return 0 }
+    ([regex]::Matches([System.IO.File]::ReadAllText($statePath), '\[\d{15,},')).Count
+}
 function Expire-Cache {
     $old = [DateTime]::UtcNow.AddMinutes(-10).ToString('o')
     $body = (Read-Cache) -replace '"computedAtUtc":"[^"]+"', ('"computedAtUtc":"{0}"' -f $old)
@@ -75,6 +79,7 @@ Write-Turns @(
 Fresh
 $l = Render $null
 Check 'first scan sees 30k' ((Tok $l '5h') -eq 30000) $l
+Check 'and caches its three turns' ((Cached-Turns) -eq 3) ("{0} cached" -f (Cached-Turns))
 $turnsAfterFirst = Cached-Turns
 foreach ($i in 1..3) { Expire-Cache; $l = Render $null }
 Check 'three rescans later the total is still 30k' ((Tok $l '5h') -eq 30000) $l
@@ -115,6 +120,62 @@ Fresh
 Seed-Store @{ '5h' = @{ name = '5h'; percent = 3; observedAtUtc = $now.ToString('o'); knownAtUtc = $now.AddMinutes(-30).ToString('o'); resetsAtUtc = $now.AddHours(4).ToString('o') } }
 $l = Render @{ five_hour = @{ used_percentage = 50; resets_at = (E $now.AddMinutes(-20)) } } $transcript
 Check 'stays on the current 3%, not the old window''s 50%' ($l -match '5h 3%') $l
+
+"--- 7. a cache hit still ends the session once it has gone quiet"
+Fresh
+$l = Render $null
+Check 'an active session shows its tokens' ($l -match 'session 10.0k') $l
+$quiet = [DateTime]::UtcNow.AddMinutes(-40).ToString('o')
+$body = (Read-Cache) -replace '"sessionLatestUtc":"[^"]+"', ('"sessionLatestUtc":"{0}"' -f $quiet)
+[System.IO.File]::WriteAllText($cachePath, $body, (New-Object System.Text.UTF8Encoding($false)))
+$l = Render $null
+Check 'forty quiet minutes later it reads 0 without a rescan' ($l -match 'session 0 ') $l
+
+"--- 8. context size comes from the end of the session transcript"
+Fresh
+$l = Render $null $transcript
+Check 'reads the last turn''s 10k' ($l -match 'ctx 10\.0k') $l
+
+"--- 9. only one window rescans at a time"
+$lockPath = Join-Path $claude 'statusline-tokens.scan.lock'
+Write-Turns @(@{ minutesAgo = 20; tokens = 10000 })
+Fresh
+$l = Render $null
+Check 'starts at 10k' ((Tok $l '5h') -eq 10000) $l
+Write-Turns @(@{ minutesAgo = 20; tokens = 10000 }, @{ minutesAgo = 5; tokens = 5000 })
+Expire-Cache
+Set-Content -Path $lockPath -Value '' -Encoding ascii
+$l = Render $null
+Check 'while another window is scanning, shows the last total' ((Tok $l '5h') -eq 10000) $l
+Remove-Item $lockPath -Force
+$l = Render $null
+Check 'and scans once the other has finished' ((Tok $l '5h') -eq 15000) $l
+Check 'leaving no lock behind' (-not (Test-Path $lockPath)) 'lock still present'
+
+"--- 10. a lock left by a killed window does not block scans for long"
+Write-Turns @(@{ minutesAgo = 20; tokens = 10000 }, @{ minutesAgo = 5; tokens = 5000 }, @{ minutesAgo = 2; tokens = 1000 })
+Expire-Cache
+Set-Content -Path $lockPath -Value '' -Encoding ascii
+(Get-Item $lockPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-5)
+$l = Render $null
+Check 'a five-minute-old lock is ignored' ((Tok $l '5h') -eq 16000) $l
+
+"--- 11. a slow scan is kept for longer"
+function Age-Cache([int]$seconds, $scanMs) {
+    $body = (Read-Cache) -replace '"computedAtUtc":"[^"]+"', ('"computedAtUtc":"{0}"' -f [DateTime]::UtcNow.AddSeconds(-$seconds).ToString('o'))
+    $body = $body -replace '"scanMs":[0-9.]+', ('"scanMs":{0}' -f $scanMs)
+    [System.IO.File]::WriteAllText($cachePath, $body, (New-Object System.Text.UTF8Encoding($false)))
+}
+Write-Turns @(@{ minutesAgo = 20; tokens = 10000 })
+Fresh
+$null = Render $null
+Write-Turns @(@{ minutesAgo = 20; tokens = 10000 }, @{ minutesAgo = 5; tokens = 5000 })
+Age-Cache 100 30000
+$l = Render $null
+Check 'a 30 second scan is reused 100 seconds later' ((Tok $l '5h') -eq 10000) $l
+Age-Cache 100 50
+$l = Render $null
+Check 'a fast scan is not' ((Tok $l '5h') -eq 15000) $l
 
 ""
 "$pass passed, $fail failed"

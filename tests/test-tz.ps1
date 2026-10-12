@@ -19,7 +19,7 @@ function Check([string]$n, [bool]$ok, [string]$d) {
 # so it can be evaluated here without running the whole render.
 $src = [System.IO.File]::ReadAllText($ScriptPath)
 $start = $src.IndexOf('$tzLabelEnabled = -not')
-$end   = $src.IndexOf('# Local clock time,')
+$end   = $src.IndexOf('function Fmt-AbsLocal(')
 if ($start -lt 0 -or $end -le $start) { throw 'could not locate the timezone block in the script' }
 # Dot-sourced so the map and the function land in this scope.
 . ([ScriptBlock]::Create($src.Substring($start, $end - $start)))
