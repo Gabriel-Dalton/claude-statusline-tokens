@@ -24,7 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **CI.** `tests/run-all.ps1` runs on every push and pull request under Windows PowerShell 5.1.
 
-- **Tests:** 140 assertions, up from 129.
+- **Tests:** 141 assertions, up from 129. The eight-way concurrency check no longer fails when a slow machine makes one writer give up its turn, which is allowed by design.
 
 
 ## [0.8.0] - 2026-10-11
