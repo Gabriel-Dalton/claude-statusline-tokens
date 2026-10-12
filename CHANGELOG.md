@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-11
+
 ### Changed
 
 - **The landing page is one short page.** It opens with what the status line shows, explains each part of the line, gives the three install steps and answers six questions. The old page was several times longer.
