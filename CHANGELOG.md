@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-11
+
+### Changed
+
+- **A cache hit reads a few hundred bytes instead of the whole transcript index.** The per-transcript state moved out of `statusline-tokens.cache.json` into its own file, `statusline-transcripts.cache.json`, which is read and written only when a scan runs. The summary file went from 4.5 MB to under 1 KB on a large profile, and the state file from 4.5 MB to 1.2 MB by dropping the stored copy of each transcript's last usage line.
+
+- **Only one window scans at a time.** With several sessions open, each one that found the cache expired started its own scan. A scan now takes a lock, and the others show the last totals until it finishes. A lock left by a killed window is ignored after 60 seconds.
+
+- **A slow scan is kept for longer.** The cache lifetime is 20 seconds or ten times the last scan's duration, whichever is longer, up to 5 minutes.
+
+- **Context size is read from the end of the session transcript** instead of from the cache, so it is current on every render.
+
+- **Measured** on 840 MB of transcripts from the last seven days, Windows PowerShell 5.1: a cache hit takes 0.9 seconds, of which 0.3 is PowerShell starting, and a rescan takes 2.5 seconds. In 0.8.0 those were 1.2 and 3 seconds, with every window rescanning.
+
+- **Comments removed from `statusline-tokens.ps1`.** 2,400 lines to about 1,700. The reasoning they carried is in this changelog, the docs and the issues.
+
+- **CI.** `tests/run-all.ps1` runs on every push and pull request under Windows PowerShell 5.1.
+
+- **Tests:** 141 assertions, up from 129. The eight-way concurrency check no longer fails when a slow machine makes one writer give up its turn, which is allowed by design.
+
+
 ## [0.8.0] - 2026-10-11
 
 ### Added
