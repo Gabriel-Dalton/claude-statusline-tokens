@@ -924,22 +924,92 @@ if ($currentAccount) {
     }
 }
 
-$checkpointTimes = $null
-function Account-At([DateTime]$t) {
-    if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
-    if ($null -eq $script:checkpointTimes) {
-        $script:checkpointTimes = New-Object System.Collections.ArrayList
-        foreach ($cp in $script:checkpoints) {
-            $cpTime = ConvertTo-ResetUtc $cp.from
-            if ($null -eq $cpTime) {
-                Write-DebugLog "unparseable checkpoint 'from': $($cp.from)" -Scope 'checkpoint-parse'
-                continue
-            }
-            [void]$script:checkpointTimes.Add(@{ time = $cpTime; cp = $cp })
+$sessionsPath    = [System.IO.Path]::Combine($projectsDir, 'statusline-sessions.json')
+$sessionKeepDays = 8
+$sessionsRaw     = ''
+if (Test-Path -LiteralPath $sessionsPath) {
+    try { $sessionsRaw = [System.IO.File]::ReadAllText($sessionsPath) } catch { Write-DebugLog $_ -Scope 'sessions-load' }
+}
+$sessionPoints = $null
+function Get-SessionPoints {
+    if ($null -ne $script:sessionPoints) { return $script:sessionPoints }
+    $script:sessionPoints = @{}
+    if (-not $script:sessionsRaw) { return $script:sessionPoints }
+    try {
+        $loaded = $script:sessionsRaw | ConvertFrom-Json -ErrorAction Stop
+        if ($loaded.sessions) {
+            foreach ($prop in $loaded.sessions.PSObject.Properties) { $script:sessionPoints[$prop.Name] = @($prop.Value) }
+        }
+    } catch { Write-DebugLog $_ -Scope 'sessions-load' }
+    return $script:sessionPoints
+}
+if ($currentAccount -and $sessionIdResolved -and (Test-Path -LiteralPath $projectsDir)) {
+    $knownOrg = ''
+    $mSession = [regex]::Match($sessionsRaw, ('"{0}":\[([^\]]*)\]' -f [regex]::Escape($sessionIdResolved)))
+    if ($mSession.Success) {
+        $mOrgs = [regex]::Matches($mSession.Groups[1].Value, '"org":"([^"]*)"')
+        if ($mOrgs.Count -gt 0) { $knownOrg = $mOrgs[$mOrgs.Count - 1].Groups[1].Value }
+    }
+    if ($knownOrg -ne $currentAccount.org) {
+        $points = Get-SessionPoints
+        $mine = @()
+        if ($points.ContainsKey($sessionIdResolved)) { $mine = @($points[$sessionIdResolved]) }
+        $points[$sessionIdResolved] = $mine + @(@{ from = $nowUtc.ToString('o'); org = $currentAccount.org })
+        $keepFrom = $nowUtc.AddDays(-$sessionKeepDays)
+        $keepSessions = @{}
+        foreach ($sid in $points.Keys) {
+            $pts = @($points[$sid])
+            $lastFrom = ConvertTo-ResetUtc $pts[-1].from
+            if ($null -ne $lastFrom -and $lastFrom -lt $keepFrom) { continue }
+            $keepSessions[$sid] = $pts
+        }
+        $tmp = '{0}.{1}.tmp' -f $sessionsPath, [System.Diagnostics.Process]::GetCurrentProcess().Id
+        try {
+            $body = @{ sessions = $keepSessions } | ConvertTo-Json -Depth 5 -Compress -ErrorAction Stop
+            [System.IO.File]::WriteAllText($tmp, $body, [System.Text.UTF8Encoding]::new($false))
+            if (Test-Path -LiteralPath $sessionsPath) { Remove-Item -LiteralPath $sessionsPath -Force -ErrorAction SilentlyContinue }
+            [System.IO.File]::Move($tmp, $sessionsPath)
+        } catch {
+            Write-DebugLog $_ -Scope 'sessions-write'
+            try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch { Write-DebugLog $_ -Scope 'sessions-write' }
         }
     }
-    $acct = $script:checkpoints[0]
-    foreach ($e in $script:checkpointTimes) {
+}
+
+function Get-Timeline($Points) {
+    $list = New-Object System.Collections.ArrayList
+    foreach ($cp in @($Points)) {
+        $cpTime = ConvertTo-ResetUtc $cp.from
+        if ($null -eq $cpTime) {
+            Write-DebugLog "unparseable checkpoint 'from': $($cp.from)" -Scope 'checkpoint-parse'
+            continue
+        }
+        [void]$list.Add(@{ time = $cpTime; cp = $cp })
+    }
+    return ,$list
+}
+
+function Get-SessionTimeline([System.IO.FileInfo]$File) {
+    $sid = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    if ($File.Directory.Name -eq 'subagents' -and $File.Directory.Parent) { $sid = $File.Directory.Parent.Name }
+    $points = Get-SessionPoints
+    if (-not $points.ContainsKey($sid)) { return $null }
+    $timeline = Get-Timeline $points[$sid]
+    if ($timeline.Count -eq 0) { return $null }
+    return ,$timeline
+}
+
+$checkpointTimes = $null
+function Account-At([DateTime]$t, $Timeline = $null) {
+    if ($null -ne $Timeline) {
+        $acct = $Timeline[0].cp
+    } else {
+        if (-not $script:checkpoints -or $script:checkpoints.Count -eq 0) { return $null }
+        if ($null -eq $script:checkpointTimes) { $script:checkpointTimes = Get-Timeline $script:checkpoints }
+        $Timeline = $script:checkpointTimes
+        $acct = $script:checkpoints[0]
+    }
+    foreach ($e in $Timeline) {
         if ($t -ge $e.time) { $acct = $e.cp } else { break }
     }
     return $acct
@@ -1215,7 +1285,7 @@ function Write-TranscriptState([string]$Path, $State) {
     }
 }
 
-function Apply-Turn($turn) {
+function Apply-Turn($turn, $Timeline = $null) {
     if (-not $turn) { return }
     if ($turn.msgId) {
         if ($script:seen.ContainsKey($turn.msgId)) { return }
@@ -1223,7 +1293,7 @@ function Apply-Turn($turn) {
     }
     $t = [DateTime]::new([long]$turn.ticks, [DateTimeKind]::Utc)
 
-    $turnAcct = Account-At $t
+    $turnAcct = Account-At $t $Timeline
     $isCurrent = $true
     if ($script:currentAccount) {
         $isCurrent = ($turnAcct -and [string]$turnAcct.org -eq $script:currentAccount.org)
@@ -1305,7 +1375,8 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
             }
         }
 
-        foreach ($k in $kept) { Apply-Turn $k }
+        $timeline = Get-SessionTimeline $f
+        foreach ($k in $kept) { Apply-Turn $k $timeline }
 
         $reader = $null
         $stream = $null
@@ -1333,7 +1404,7 @@ if (-not $useCache -and (Test-Path $projectsDir)) {
 
                     $lastUsageLineThisFile = $line
                     $isRepeat = $turn.msgId -and $seen.ContainsKey($turn.msgId)
-                    Apply-Turn $turn
+                    Apply-Turn $turn $timeline
                     if (-not $isRepeat) { [void]$newTurnsForCache.Add($turn) }
                 }
 

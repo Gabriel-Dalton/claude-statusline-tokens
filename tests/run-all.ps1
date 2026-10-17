@@ -57,7 +57,8 @@ $suites = @(
     @{ file = 'test-tz.ps1';        what = 'reset times name their zone, per instant, not per today' },
     @{ file = 'test-devices.ps1';   what = 'token totals include your other devices, when asked to' },
     @{ file = 'test-scale.ps1';     what = 'a render stays cheap on a large profile' },
-    @{ file = 'test-configdir.ps1'; what = 'a session under CLAUDE_CONFIG_DIR reads its own profile' }
+    @{ file = 'test-configdir.ps1'; what = 'a session under CLAUDE_CONFIG_DIR reads its own profile' },
+    @{ file = 'test-shared.ps1';    what = 'two profiles on one transcripts folder each count their own' }
 )
 
 Write-Host "testing $ScriptPath`n"

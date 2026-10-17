@@ -381,6 +381,21 @@ function Read-Checkpoints {
     return ,@()
 }
 
+# Session -> account points written by the statusline into the transcripts
+# folder, for profiles that share one folder. See docs/MULTI-ACCOUNT.md.
+$sessionsPath = [System.IO.Path]::Combine($projectsDir, 'statusline-sessions.json')
+function Read-SessionPoints {
+    $points = @{}
+    if (-not (Test-Path -LiteralPath $sessionsPath)) { return $points }
+    try {
+        $loaded = Get-Content -Raw -Encoding UTF8 -LiteralPath $sessionsPath | ConvertFrom-Json
+        if ($loaded.sessions) {
+            foreach ($prop in $loaded.sessions.PSObject.Properties) { $points[$prop.Name] = @($prop.Value) }
+        }
+    } catch {}
+    return $points
+}
+
 # Returns the checkpoint that owned the given UTC instant. Pre-first-checkpoint
 # history is attributed to the earliest checkpoint, matching statusline behavior.
 function Account-At([DateTime]$t, $checkpoints) {
@@ -472,7 +487,13 @@ function Invoke-Scan {
         -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -gt $cut7d }
 
+    $sessionPoints = Read-SessionPoints
     foreach ($f in $files) {
+        $sid = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        if ($f.Directory.Name -eq 'subagents' -and $f.Directory.Parent) { $sid = $f.Directory.Parent.Name }
+        $fileCheckpoints = $Checkpoints
+        if ($sessionPoints.ContainsKey($sid)) { $fileCheckpoints = $sessionPoints[$sid] }
+
         # Project label: try cwd from the file's first cwd-bearing line so
         # paths with embedded dashes ("Gabriel-Dalton") survive intact. The
         # parent folder name in .claude/projects has all separators replaced
@@ -602,7 +623,7 @@ function Invoke-Scan {
                     }
                 }
 
-                $turnAcct = Account-At $t $Checkpoints
+                $turnAcct = Account-At $t $fileCheckpoints
                 $isCurrent = $true
                 if ($CurrentAccount) {
                     $isCurrent = ($turnAcct -and [string]$turnAcct.org -eq $CurrentAccount.org)

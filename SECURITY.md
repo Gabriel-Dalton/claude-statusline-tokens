@@ -38,6 +38,8 @@ The script reads from your local filesystem only. Specifically:
 ### What the script writes
 
 - `~/.claude/statusline-accounts.json` (its own history).
+- `~/.claude/projects/statusline-sessions.json` (which account each recent
+  session ran under: session IDs, timestamps and organization UUIDs, no email).
 - `~/.claude/statusline-tokens.cache.json` (its own cache).
 - `~/.claude/statusline-scoped-limits.cache.json` (its own cache — percentages
   and reset timestamps only; no token, no credential material).

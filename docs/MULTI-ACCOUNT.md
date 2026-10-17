@@ -23,7 +23,7 @@ Claude Code writes its current account state to `~/.claude.json`. Inside, the `o
 ```json
 "oauthAccount": {
   "emailAddress": "you@example.com",
-  "organizationUuid": "98882986-849d-4a73-8a9f-781ddc03b20c",
+  "organizationUuid": "11111111-2222-4333-8444-555555555555",
   "organizationName": "Your Workspace",
   "organizationType": "claude_team",
   "organizationRateLimitTier": "default_raven"
@@ -47,7 +47,7 @@ The script maintains a sidecar file at `~/.claude/statusline-accounts.json`:
   "checkpoints": [
     {
       "from":  "2026-05-10T14:32:00Z",
-      "org":   "98882986-849d-4a73-8a9f-781ddc03b20c",
+      "org":   "11111111-2222-4333-8444-555555555555",
       "email": "you@example.com",
       "name":  "Personal"
     },
@@ -111,6 +111,31 @@ Some account switchers start a session with `CLAUDE_CONFIG_DIR` pointing at a fo
 
 Each folder has its own stores, so two accounts open side by side each show their own percentages, reset times and totals.
 
+### Two profiles on one transcripts folder
+
+Some setups point the second profile's `projects` folder at the first one, for example a Windows junction from `~/.claude-personal/projects` to `~/.claude/projects`, so `claude --resume` sees every conversation from either profile. Checkpoints can't attribute that folder. They assume one sign-in that changes over time, and here two profiles are signed in to different accounts at the same moment. Each profile's checkpoints only know its own account, so on checkpoints alone both profiles count every turn in the folder, and the 5h and 7d totals mix the two accounts.
+
+The hook input carries a `session_id`, and Claude Code names each transcript after it: `projects/<project>/<session>.jsonl`, with subagent transcripts in `projects/<project>/<session>/subagents/`. Each profile records the session it is drawing the line for in `statusline-sessions.json`, which sits in the transcripts folder itself, so every profile that shares the folder reads and writes the same record:
+
+```json
+{
+  "sessions": {
+    "0b6e2c5e-4f1a-4c39-9d7e-1f2a3b4c5d6e": [
+      { "from": "2026-10-16T17:02:11Z", "org": "11111111-2222-4333-8444-555555555555" }
+    ],
+    "7d1c9a40-2b8e-4f6d-a5c3-6e7f8a9b0c1d": [
+      { "from": "2026-10-16T17:05:40Z", "org": "a51b0c33-d49d-4b73-9c2c-1bd2e9a3f44e" }
+    ]
+  }
+}
+```
+
+Each session has its own list of points, read the same way as the checkpoints. A sign-in change inside a session appends a second point, and the turns before it stay with the earlier account. A transcript whose session has a record is attributed only through that record. A transcript with no record falls back to the checkpoints: conversations from before the record existed, and sessions that never drew a status line, such as `claude -p` runs. Under a shared folder those still count for whichever profile is drawing the line, until they are more than 7 days old.
+
+The record is written only when a session is new or its account changed, so a normal render reads it and writes nothing. Sessions whose latest point is more than 8 days old are dropped on the next write. A session that is still running after that records itself again on its next render. Two profiles writing at the same moment can lose one entry, and the session that lost it records itself again on its next render.
+
+A single profile gets the same file, and its totals don't change: each session's record names the account the checkpoints would have named.
+
 ## Edge cases
 
 **Brand-new install with no `~/.claude.json`:** `currentAccount` is `null`, no checkpoints are written, and the per-account filter degrades gracefully to "every turn counts as current." Status line looks exactly like the pre-v0.2 single-account version. As soon as `~/.claude.json` appears, the first checkpoint is written on the next render.
@@ -136,12 +161,13 @@ The script's `Get-JsonObject` helper walks the file character-by-character, trac
 | `~/.claude.json` | Claude Code's own config; contains `oauthAccount` | Claude Code |
 | `~/.claude/projects/**/*.jsonl` | Per-session transcripts with `usage` blocks | Claude Code |
 | `~/.claude/statusline-accounts.json` | Account checkpoint history | this script |
+| `~/.claude/projects/statusline-sessions.json` | Which account each recent session ran under | this script |
 | `~/.claude/statusline-tokens.cache.json` | 20s result cache, keyed by current org UUID | this script |
 
 The cache invalidates whenever `orgKey` doesn't match the current account, so switching accounts forces a fresh scan on the next render rather than serving stale numbers for up to 20 seconds.
 
 ## Privacy
 
-Nothing in this flow is transmitted off your machine. The script reads three local files (`~/.claude.json`, the transcripts directory, and the two sidecar files it owns), computes some sums, and writes a line to stdout for Claude Code to render. The `organizationUuid` and email are stored only in `~/.claude/statusline-accounts.json`, which lives entirely under your home directory.
+Nothing in this flow is transmitted off your machine. The script reads three local files (`~/.claude.json`, the transcripts directory, and the two sidecar files it owns), computes some sums, and writes a line to stdout for Claude Code to render. The `organizationUuid` and email are stored only in `~/.claude/statusline-accounts.json`, which lives entirely under your home directory. `statusline-sessions.json` holds session IDs, timestamps and `organizationUuid`s, no email.
 
 If you want to omit the email even from local storage, edit the checkpoint-append block in `statusline-tokens.ps1` to drop the `email` field.

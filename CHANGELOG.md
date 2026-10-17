@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two profiles sharing one transcripts folder each count their own account.** With `~/.claude-personal/projects` a junction to `~/.claude/projects`, both profiles read the same transcripts, and each profile's checkpoints only know its own account, so the 5h and 7d totals in both windows counted every turn from either account. Each profile now records the session it draws the line for, from the hook's `session_id`, in `statusline-sessions.json` inside the transcripts folder, where every profile sharing the folder reads it. A transcript whose session has a record is attributed through that record, and a sign-in change inside a session splits it at the change. Transcripts with no record, from before this change or from `claude -p` runs, fall back to the checkpoints as before. The record is written only when a session is new or changes account, and is read with one regex on renders served from the cache. `claude-dashboard.ps1` reads the same record. See [`docs/MULTI-ACCOUNT.md`](docs/MULTI-ACCOUNT.md#two-profiles-on-one-transcripts-folder).
+
+- **`tests/test-shared.ps1`**, 8 assertions: two profiles on different accounts with one projects folder joined by a junction, including a subagent transcript, a transcript with no record, and a sign-in change inside a session. Tests: 149 assertions, up from 141.
+
 ## [0.9.0] - 2026-10-11
 
 ### Changed
